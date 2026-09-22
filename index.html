@@ -13,29 +13,40 @@
     <script src="TemplateData/UnityProgress.js"></script>
     <script src="Build/UnityLoader.js"></script>
     <script>
-        // Capture WebAssembly memory instance on page startup
+        // Capture WebAssembly memory instance on page startup safely
         const nativeInstantiate = WebAssembly.instantiate;
         WebAssembly.instantiate = async function(bufferSource, importObject) {
             const result = await nativeInstantiate(bufferSource, importObject);
             const instance = result.instance || result;
-            if (window.GameAPI && window.GameAPI.Memory) {
-            window.GameAPI.Memory.init(instance.exports || window.Module);
-            console.log("[GameAPI] WebAssembly memory bound successfully.");
+
+            try {
+                if (typeof window.GameAPI?.Memory?.init === 'function') {
+                    window.GameAPI.Memory.init(instance.exports || window.Module);
+                    console.log("[GameAPI] WebAssembly memory bound successfully.");
+                } else {
+                    console.warn("[GameAPI] Memory.init function not found yet; skipping hook execution.");
+                }
+            } catch (err) {
+                console.error("[GameAPI] Non-fatal hook error:", err);
             }
+
             return result;
         };
-        var gameInstance = UnityLoader.instantiate("gameContainer", "Build/SnowRider3D-gd-1.json", { onProgress: UnityProgress, Module: { onRuntimeInitialized: function () { UnityProgress(gameInstance, "complete") } } });
+
+        var gameInstance = UnityLoader.instantiate("gameContainer", "Build/SnowRider3D-gd-1.json", { 
+            onProgress: UnityProgress, 
+            Module: { 
+                onRuntimeInitialized: function () { 
+                    UnityProgress(gameInstance, "complete"); 
+                } 
+            } 
+        });
     </script>
 </head>
 
 <body style="overflow:hidden; margin:0; padding:0;">
     <div class="webgl-content" style="position: absolute; width: 100%; height: 100%;">
         <div id="gameContainer" style="width: 960px; height: 600px; margin: auto"></div>
-        <!--       <div class="footer">
-            <div class="webgl-logo"></div>
-            <div class="fullscreen" onclick="gameInstance.SetFullscreen(1)"></div>
-            <div class="title">Snow Rider 3D</div>
-        </div> -->
     </div>
 </body>
 
