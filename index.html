@@ -1,9 +1,6 @@
 <!DOCTYPE html>
 <html lang="en-us">
 
-<!DOCTYPE html>
-<html lang="en-us">
-
 <head>
     <meta charset="utf-8">
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
@@ -12,49 +9,22 @@
     <link rel="stylesheet" href="TemplateData/style.css">
     <meta name="description" content="Snow Rider 3D, Snow Rider 3D Mathnook, Snow Rider 3D Unblocked">
     <meta property="og:image" content="snow-rider-3d.png" />
-    
-    <!-- 1. Load GameAPI bridge definitions -->
     <script src="GameAPI.js"></script>
     <script src="TemplateData/UnityProgress.js"></script>
     <script src="Build/UnityLoader.js"></script>
-    
-    <!-- 2. WASM Memory Hook -->
     <script>
-        const bindGameMemory = (instance) => {
-            if (window.GameAPI && window.GameAPI.Memory) {
-                const memoryExports = instance.exports || window.Module || instance;
-                window.GameAPI.Memory.init(memoryExports);
-                console.log("[GameAPI] WebAssembly memory bound successfully.");
-            }
-        };
-
-        // Catch standard instantiation
+        // Capture WebAssembly memory instance on page startup
         const nativeInstantiate = WebAssembly.instantiate;
         WebAssembly.instantiate = async function(bufferSource, importObject) {
             const result = await nativeInstantiate(bufferSource, importObject);
             const instance = result.instance || result;
-            bindGameMemory(instance);
+            if (window.GameAPI && window.GameAPI.Memory) {
+            window.GameAPI.Memory.init(instance.exports || window.Module);
+            console.log("[GameAPI] WebAssembly memory bound successfully.");
+            }
             return result;
         };
-
-        // Catch streaming instantiation (if used by browser)
-        if (WebAssembly.instantiateStreaming) {
-            const nativeStreaming = WebAssembly.instantiateStreaming;
-            WebAssembly.instantiateStreaming = async function(source, importObject) {
-                const result = await nativeStreaming(source, importObject);
-                bindGameMemory(result.instance);
-                return result;
-            };
-        }
-
-        var gameInstance = UnityLoader.instantiate("gameContainer", "Build/SnowRider3D-gd-1.json", { 
-            onProgress: UnityProgress, 
-            Module: { 
-                onRuntimeInitialized: function () { 
-                    UnityProgress(gameInstance, "complete");
-                } 
-            } 
-        });
+        var gameInstance = UnityLoader.instantiate("gameContainer", "Build/SnowRider3D-gd-1.json", { onProgress: UnityProgress, Module: { onRuntimeInitialized: function () { UnityProgress(gameInstance, "complete") } } });
     </script>
 </head>
 
