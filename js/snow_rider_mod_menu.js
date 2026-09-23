@@ -1,19 +1,13 @@
 /**
  * SNOW RIDER 3D — REBUILT MOD CONSOLE
  * ----------------------------------------------------------------------------
- * Powered directly by GameAPI (zero raw WASM scanning or manual anchoring required).
+ * Powered directly by GameAPI with direct Unity WebGL fallback execution.
  * 
- * Features:
- * - High-Tech Obsidian Glassmorphism UI (isolated in Shadow DOM)
- * - Invincible-Style Elastic Inertia Jiggle Physics (liquid spring wobble on drag)
- * - Freeform Resizable Window with corner grip handle
- * - Integrated Speed Gear Engine (Real-Time TimeScale)
- * - Full Cheat Suite:
- *     * Player Physics: God Mode, Infinite Air Jump, Bunny Hop, Speedhack, Super Jump, Steering, Respawn
- *     * Game & Economy: Infinite Presents, Score Setter & Multipliers, Game Flow Controls, Ad Bypasser
- *     * Skins & Visuals: Unlock All Sleds, Skin Selector, Canvas Teleporter, Atmosphere Shaders, UI Text Overrides
- *     * Unity Console: Direct SendMessage dispatcher
- * - Keyboard shortcut: Insert key to toggle
+ * Includes:
+ * - Basic Tab: Essential cheats (God Mode, Inf Jump, Speedhack, Score/Gifts, Sled Unlocks)
+ * - Complex Tab: SledgeData Physics Engine, Memory Pointers, Shaders, Canvas Teleport & Dispatcher
+ * - Input Propagation Isolation (Fixes Unity stealing number/keyboard inputs)
+ * - Inertia Jiggle Physics & Freeform Resizable Window
  */
 
 ;(function () {
@@ -31,7 +25,8 @@
     const api = getAPI();
     if (api && typeof fn === 'function') {
       try {
-        return fn(api);
+        const res = fn(api);
+        if (res !== false && res !== undefined) return res;
       } catch (err) {
         console.warn('[ModConsole] API call error:', err);
       }
@@ -40,7 +35,25 @@
     return false;
   }
 
-  // --- DOM Helpers ---
+  // Direct Unity SendMessage fallback if GameAPI instance is delayed
+  function directUnitySend(target, method, param) {
+    const inst = window.gameInstance || window.unityInstance || (window.GameAPI && window.GameAPI.Context && window.GameAPI.Context.unityInstance);
+    if (inst && typeof inst.SendMessage === 'function') {
+      try {
+        if (param !== undefined) {
+          inst.SendMessage(target, method, param);
+        } else {
+          inst.SendMessage(target, method);
+        }
+        return true;
+      } catch (e) {
+        console.warn(`[ModConsole] Direct SendMessage failed for ${target}.${method}:`, e);
+      }
+    }
+    return false;
+  }
+
+  // --- DOM Helpers & Event Isolation ---
   function el(tag, attrs = {}, children = []) {
     const n = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
@@ -50,6 +63,26 @@
     }
     children.forEach(c => n.appendChild(c));
     return n;
+  }
+
+  // Input helper with complete event propagation stopping to fix Unity input stealing
+  function makeInput(attrs = {}) {
+    const input = el('input', attrs);
+    const isolate = (e) => e.stopPropagation();
+    input.addEventListener('keydown', isolate);
+    input.addEventListener('keyup', isolate);
+    input.addEventListener('keypress', isolate);
+    input.addEventListener('input', isolate);
+    return input;
+  }
+
+  function makeSelect(attrs = {}, children = []) {
+    const select = el('select', attrs, children);
+    const isolate = (e) => e.stopPropagation();
+    select.addEventListener('keydown', isolate);
+    select.addEventListener('keyup', isolate);
+    select.addEventListener('keypress', isolate);
+    return select;
   }
 
   function makeSwitch(initial, onChange) {
@@ -70,7 +103,7 @@
   }
 
   /* ============================================================
-   * INERTIA JIGGLE PHYSICS ("Invincible" Style Wobble)
+   * INERTIA JIGGLE PHYSICS
    * ============================================================ */
   function makeDraggableWithJiggle(handle, panel) {
     let dx = 0, dy = 0, dragging = false;
@@ -107,7 +140,6 @@
       panel.style.left = newLeft + 'px';
       panel.style.top = newTop + 'px';
 
-      // Dynamic Inertia Tilt & Skew
       const tilt = Math.max(-14, Math.min(14, vx * 0.22));
       const skew = Math.max(-7, Math.min(7, vx * -0.12));
       const scale = 1 + Math.min(0.04, Math.hypot(vx, vy) * 0.0015);
@@ -119,7 +151,6 @@
       dragging = false;
       panel.classList.remove('srmm-dragging');
 
-      // Decaying Spring Damping Bounce on Release
       let currentTilt = Math.max(-14, Math.min(14, vx * 0.22));
       let currentSkew = Math.max(-7, Math.min(7, vx * -0.12));
       let springV = 0;
@@ -175,17 +206,17 @@
   }
 
   /* ============================================================
-   * CSS STYLES (Cyberpunk Glassmorphism)
+   * CSS STYLES
    * ============================================================ */
   const CSS = `
   :host { all: initial; }
   * { box-sizing: border-box; }
 
   .srmm-root, .srmm-fab, .srmm-toasts {
-    --bg-base: rgba(10, 15, 29, 0.88);
-    --surface-1: rgba(22, 32, 54, 0.55);
-    --surface-2: rgba(30, 44, 74, 0.45);
-    --border-subtle: rgba(255, 255, 255, 0.1);
+    --bg-base: rgba(10, 15, 29, 0.92);
+    --surface-1: rgba(22, 32, 54, 0.6);
+    --surface-2: rgba(30, 44, 74, 0.5);
+    --border-subtle: rgba(255, 255, 255, 0.12);
     
     --neon-cyan: #00f2fe;
     --neon-blue: #4facfe;
@@ -209,7 +240,6 @@
 
   .srmm-mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
 
-  /* Floating Action Button (FAB) */
   .srmm-fab {
     position: fixed; bottom: 24px; right: 24px; z-index: 2147483000;
     width: 50px; height: 50px; border-radius: var(--radius-pill);
@@ -226,9 +256,8 @@
   }
   .srmm-fab.hidden { display: none; }
 
-  /* Main Console Window */
   .srmm-root {
-    position: fixed; top: 25px; right: 25px; width: 420px; height: 610px; z-index: 2147483000;
+    position: fixed; top: 25px; right: 25px; width: 440px; height: 630px; z-index: 2147483000;
     background: var(--bg-base);
     backdrop-filter: blur(24px) saturate(180%);
     -webkit-backdrop-filter: blur(24px) saturate(180%);
@@ -245,7 +274,6 @@
   .srmm-root.hidden { display: none; }
   .srmm-root.srmm-dragging { user-select: none; box-shadow: 0 35px 90px rgba(0, 0, 0, 0.85), 0 0 45px rgba(0, 242, 254, 0.25); }
 
-  /* Header */
   .srmm-head {
     display: flex; align-items: center; gap: 10px; padding: 13px 16px;
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent);
@@ -274,7 +302,6 @@
   }
   .srmm-headbtn:hover { background: rgba(255, 255, 255, 0.15); color: #fff; }
 
-  /* Speed Gear Bar */
   .srmm-speedgear {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
     padding: 8px 16px; background: rgba(0, 0, 0, 0.3); border-bottom: 1px solid var(--border-subtle);
@@ -291,17 +318,16 @@
   .srmm-preset-btn.active { background: var(--neon-cyan); color: #000; font-weight: 700; border-color: var(--neon-cyan); }
 
   /* Navigation Tabs */
-  .srmm-tabs { position: relative; display: flex; padding: 0 12px; border-bottom: 1px solid var(--border-subtle); flex-shrink: 0; overflow-x: auto; }
-  .srmm-tabs::-webkit-scrollbar { display: none; }
+  .srmm-tabs { position: relative; display: flex; padding: 0 12px; border-bottom: 1px solid var(--border-subtle); flex-shrink: 0; }
   .srmm-tab-btn {
-    padding: 10px 12px; background: none; border: none; cursor: pointer;
-    color: var(--text-dim); font-size: 12.5px; font-weight: 600; white-space: nowrap;
-    transition: color 0.16s ease;
+    flex: 1; padding: 11px 0; background: none; border: none; cursor: pointer;
+    color: var(--text-dim); font-size: 13px; font-weight: 700; text-align: center;
+    transition: color 0.16s ease; text-transform: uppercase; letter-spacing: 0.5px;
   }
   .srmm-tab-btn:hover { color: var(--text-secondary); }
   .srmm-tab-btn.active { color: #fff; }
   .srmm-tab-indicator {
-    position: absolute; bottom: -1px; height: 2px; border-radius: 2px;
+    position: absolute; bottom: -1px; height: 3px; border-radius: 2px;
     background: linear-gradient(90deg, var(--neon-cyan), var(--neon-blue));
     box-shadow: 0 0 10px var(--neon-cyan);
     transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), width 0.2s cubic-bezier(0.16, 1, 0.3, 1);
@@ -325,7 +351,6 @@
     color: var(--neon-cyan); display: flex; align-items: center; justify-content: space-between;
   }
 
-  /* Rows */
   .srmm-row {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
     padding: 7px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.04);
@@ -336,15 +361,14 @@
   .srmm-row-label .sub { font-size: 10.5px; color: var(--text-dim); }
   .srmm-row-controls { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
-  /* Inputs & Buttons */
   .srmm-input, .srmm-select {
-    background: rgba(0, 0, 0, 0.35); border: 1px solid var(--border-subtle); color: #fff;
-    border-radius: var(--radius-sm); padding: 6px 8px; font-size: 11.5px; width: 75px;
+    background: rgba(0, 0, 0, 0.4); border: 1px solid var(--border-subtle); color: #fff;
+    border-radius: var(--radius-sm); padding: 6px 8px; font-size: 11.5px; width: 85px;
     transition: all 0.15s ease;
   }
   .srmm-input:focus, .srmm-select:focus {
     outline: none; border-color: var(--neon-cyan);
-    box-shadow: 0 0 8px rgba(0, 242, 254, 0.3); background: rgba(0, 0, 0, 0.5);
+    box-shadow: 0 0 8px rgba(0, 242, 254, 0.3); background: rgba(0, 0, 0, 0.65);
   }
   .srmm-input.wide { width: 100%; }
   .srmm-select { width: auto; cursor: pointer; }
@@ -364,7 +388,6 @@
   .srmm-btn.primary:hover { box-shadow: 0 5px 18px rgba(0, 242, 254, 0.5); filter: brightness(1.08); }
   .srmm-btn.small { padding: 4px 8px; font-size: 11px; }
 
-  /* Toggle Switch */
   .srmm-switch { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; }
   .srmm-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
   .srmm-track {
@@ -382,7 +405,6 @@
   }
   .srmm-switch input:checked + .srmm-track::before { transform: translateX(16px); }
 
-  /* Corner Resizer */
   .srmm-resizer {
     position: absolute; bottom: 0; right: 0; width: 16px; height: 16px;
     cursor: nwse-resize; z-index: 10; display: flex; align-items: flex-end; justify-content: flex-end;
@@ -395,7 +417,6 @@
   }
   .srmm-resizer:hover::after { opacity: 1; }
 
-  /* Toast Alerts */
   .srmm-toasts { position: fixed; bottom: 82px; right: 24px; z-index: 2147483000; display: flex; flex-direction: column; gap: 7px; align-items: flex-end; }
   .srmm-toast {
     background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(255, 255, 255, 0.15); color: #fff;
@@ -408,7 +429,6 @@
   .srmm-toast.danger { border-color: rgba(255, 51, 102, 0.4); }
   `;
 
-  // --- Toaster ---
   function createToaster(shadow) {
     const host = el('div', { class: 'srmm-toasts' });
     shadow.appendChild(host);
@@ -427,7 +447,6 @@
     };
   }
 
-  // --- UI Row Helper ---
   function addRow(container, title, sub, controlEl) {
     const r = el('div', { class: 'srmm-row' }, [
       el('div', { class: 'srmm-row-label' }, [
@@ -441,164 +460,167 @@
   }
 
   /* ============================================================
-   * TAB 1: PLAYER & PHYSICS
+   * BASIC TAB (MAIN CHEATS & ESSENTIALS)
    * ============================================================ */
-  function buildPlayerTab(toast) {
+  function buildBasicTab(toast) {
     const wrap = el('div', { style: 'display: flex; flex-direction: column; gap: 12px;' });
 
-    const sec = el('div', { class: 'srmm-section' }, [
-      el('div', { class: 'srmm-section-title' }, [el('span', { text: 'Player Physics & Flight' })])
+    // Section 1: Movement & Invincibility
+    const physSec = el('div', { class: 'srmm-section' }, [
+      el('div', { class: 'srmm-section-title' }, [el('span', { text: '⚡ Player & Flight Essentials' })])
     ]);
 
-    // 1. God Mode
+    // God Mode
     const godSwitch = makeSwitch(false, (on) => {
-      callAPI(api => api.Player.setGodMode(on));
-      toast(on ? 'God Mode Enabled' : 'God Mode Disabled', on ? 'success' : 'info');
+      callAPI(api => api.Player.setGodMode(on), () => { directUnitySend('Player', 'set_isGrounded', 1); });
+      toast(on ? 'God Mode Activated' : 'God Mode Deactivated', on ? 'success' : 'info');
     });
-    addRow(sec, 'God Mode (Invincibility)', 'Locks grounded status & prevents crash states', godSwitch.wrap);
+    addRow(physSec, 'God Mode (Invincible)', 'Prevents crash states & forces grounded physics', godSwitch.wrap);
 
-    // 2. Infinite Air Jump
+    // Infinite Jump
     const jumpSwitch = makeSwitch(false, (on) => {
       callAPI(api => api.Player.setInfiniteJump(on));
       toast(on ? 'Infinite Air Jump Enabled (Spacebar)' : 'Infinite Jump Disabled', on ? 'success' : 'info');
     });
-    addRow(sec, 'Infinite Air Jump', 'Allows jumping consecutively in mid-air', jumpSwitch.wrap);
+    addRow(physSec, 'Infinite Air Jump', 'Jump continuously in mid-air', jumpSwitch.wrap);
 
-    // 3. Bunny Hop / Auto Jump
+    // Auto Bunny Hop
     const bunnySwitch = makeSwitch(false, (on) => {
       callAPI(api => api.Player.setBunnyHop(on));
       toast(on ? 'Auto Bunny Hop Enabled' : 'Bunny Hop Disabled', on ? 'success' : 'info');
     });
-    addRow(sec, 'Bunny Hop (Auto Jump)', 'Automatically jumps continuously on ground', bunnySwitch.wrap);
+    addRow(physSec, 'Auto Bunny Hop', 'Automatic continuous jump loop', bunnySwitch.wrap);
 
-    // 4. Forward Speedhack
-    const speedIn = el('input', { class: 'srmm-input', value: '50' });
+    // Speedhack Input & Controls
+    const speedIn = makeInput({ class: 'srmm-input', value: '45', type: 'number' });
     const speedBtn = el('button', { class: 'srmm-btn small primary', text: 'Set Speed' });
     speedBtn.onclick = () => {
       const val = parseFloat(speedIn.value) || 30;
-      callAPI(api => api.Player.setSpeed(val));
-      toast(`Forward speed set to ${val}`, 'success');
+      callAPI(api => api.Player.setSpeed(val), () => directUnitySend('Player', 'setSpeed', val));
+      toast(`Forward Speed: ${val}`, 'success');
     };
-    addRow(sec, 'Forward Speedhack', 'Overrides player longitudinal speed', el('div', { class: 'srmm-row-controls' }, [speedIn, speedBtn]));
+    addRow(physSec, 'Forward Speedhack', 'Overrides player longitudinal speed', el('div', { class: 'srmm-row-controls' }, [speedIn, speedBtn]));
 
-    // Quick Speed Presets
+    // Speed Quick Presets
     const presetRow = el('div', { class: 'srmm-row', style: 'border:none' }, [
       el('button', { class: 'srmm-btn small', text: 'Normal (25)', onclick: () => { speedIn.value = '25'; speedBtn.click(); } }),
       el('button', { class: 'srmm-btn small', text: 'Fast (45)', onclick: () => { speedIn.value = '45'; speedBtn.click(); } }),
       el('button', { class: 'srmm-btn small', text: 'Nitro (70)', onclick: () => { speedIn.value = '70'; speedBtn.click(); } }),
-      el('button', { class: 'srmm-btn small', text: 'Warp (100)', onclick: () => { speedIn.value = '100'; speedBtn.click(); } })
+      el('button', { class: 'srmm-btn small primary', text: 'Warp (120)', onclick: () => { speedIn.value = '120'; speedBtn.click(); } })
     ]);
-    sec.appendChild(presetRow);
+    physSec.appendChild(presetRow);
 
-    // 5. Super Jump Launch Power
-    const jumpPowerIn = el('input', { class: 'srmm-input', value: '25' });
-    const jumpPowerBtn = el('button', { class: 'srmm-btn small', text: 'Set' });
-    jumpPowerBtn.onclick = () => {
-      const v = parseFloat(jumpPowerIn.value) || 25;
-      callAPI(api => api.Player.setSledgeData({ jumpSpeed: v }));
-      toast(`Jump speed set to ${v}`, 'success');
+    // Instant Actions
+    const actionRow = el('div', { class: 'srmm-row', style: 'border:none' }, [
+      el('button', { class: 'srmm-btn small primary', text: '⬆ Jump Now', onclick: () => { callAPI(api => api.Player.jump(), () => directUnitySend('Player', 'Jump')); toast('Jump!', 'info'); } }),
+      el('button', { class: 'srmm-btn small', text: '↺ Respawn', onclick: () => { callAPI(api => api.Player.respawn(), () => directUnitySend('Player', 'Spawn')); toast('Respawning...', 'info'); } })
+    ]);
+    physSec.appendChild(actionRow);
+
+    // Section 2: Economy & Unlocks
+    const ecoSec = el('div', { class: 'srmm-section' }, [
+      el('div', { class: 'srmm-section-title' }, [el('span', { text: '🎁 Economy & Unlocks' })])
+    ]);
+
+    // Gifts Adder
+    const giftRow = el('div', { class: 'srmm-row', style: 'border:none' }, [
+      el('button', { class: 'srmm-btn small', text: '+500', onclick: () => { callAPI(api => api.Game.setGifts(500), () => directUnitySend('GameControl', 'set_gifts', 500)); toast('+500 Gifts', 'success'); } }),
+      el('button', { class: 'srmm-btn small', text: '+5,000', onclick: () => { callAPI(api => api.Game.setGifts(5000), () => directUnitySend('GameControl', 'set_gifts', 5000)); toast('+5,000 Gifts', 'success'); } }),
+      el('button', { class: 'srmm-btn small primary', text: 'Max (999k)', onclick: () => { callAPI(api => api.Game.lockGifts(999999), () => directUnitySend('GameControl', 'set_gifts', 999999)); toast('Gifts locked at 999,999', 'success'); } })
+    ]);
+    addRow(ecoSec, 'Presents / Currency', 'Inject gifts into session', giftRow);
+
+    // Score Injector
+    const scoreIn = makeInput({ class: 'srmm-input', value: '9999', type: 'number' });
+    const scoreBtn = el('button', { class: 'srmm-btn small primary', text: 'Set Score' });
+    scoreBtn.onclick = () => {
+      const v = parseInt(scoreIn.value, 10) || 1000;
+      callAPI(api => api.Game.setScore(v), () => directUnitySend('GameControl', 'UpdateScore', v));
+      toast(`Score set to ${v}`, 'success');
     };
-    addRow(sec, 'Super Jump Velocity', 'Upward vertical launch impulse', el('div', { class: 'srmm-row-controls' }, [jumpPowerIn, jumpPowerBtn]));
+    addRow(ecoSec, 'Distance Score Setter', 'Instant distance score override', el('div', { class: 'srmm-row-controls' }, [scoreIn, scoreBtn]));
 
-    // 6. Steering Responsiveness
-    const steerIn = el('input', { class: 'srmm-input', value: '2.5' });
-    const steerBtn = el('button', { class: 'srmm-btn small', text: 'Set' });
+    // Unlock All Sleds
+    const unlockBtn = el('button', { class: 'srmm-btn small primary', text: 'Unlock All' });
+    unlockBtn.onclick = () => {
+      callAPI(api => api.Skins.unlockAll(), () => {
+        directUnitySend('SledSkinControl', 'Read');
+        directUnitySend('ShopGUIControl', 'OnClickSleds');
+      });
+      toast('All Sled Skins Unlocked', 'success');
+    };
+    addRow(ecoSec, 'Unlock All Sleds', 'Unlocks all shop items', unlockBtn);
+
+    // Bypass Rewarded Ads
+    const adBtn = el('button', { class: 'srmm-btn small', text: 'Claim Ad Reward' });
+    adBtn.onclick = () => {
+      callAPI(api => api.Game.showRewardedAd(), () => directUnitySend('GameManager', 'OnRewardedVideoSuccess'));
+      toast('Rewarded Ad bonus granted!', 'success');
+    };
+    addRow(ecoSec, 'Bypass Video Ads', 'Get ad rewards directly', adBtn);
+
+    // Lifecycle Controls
+    const lifeRow = el('div', { class: 'srmm-row', style: 'border:none' }, [
+      el('button', { class: 'srmm-btn small', text: '▶ Start Play', onclick: () => { callAPI(api => api.Game.startPlay(), () => directUnitySend('GameControl', 'Play')); toast('Started', 'info'); } }),
+      el('button', { class: 'srmm-btn small', text: '⏸ Pause', onclick: () => { callAPI(api => api.Game.pause(), () => directUnitySend('GameManager', 'OnPauseGame')); toast('Paused', 'info'); } }),
+      el('button', { class: 'srmm-btn small', text: '⏵ Resume', onclick: () => { callAPI(api => api.Game.resume(), () => directUnitySend('GameManager', 'OnResumeGame')); toast('Resumed', 'info'); } }),
+      el('button', { class: 'srmm-btn small', text: '☰ Menu', onclick: () => { callAPI(api => api.Game.returnToMenu(), () => directUnitySend('GameControl', 'Main')); toast('Menu', 'info'); } })
+    ]);
+    addRow(ecoSec, 'Game Controls', 'Direct flow triggers', lifeRow);
+
+    wrap.appendChild(physSec);
+    wrap.appendChild(ecoSec);
+    return wrap;
+  }
+
+  /* ============================================================
+   * COMPLEX TAB (ADVANCED ENGINE, MEMORY, SHADERS & DISPATCHER)
+   * ============================================================ */
+  function buildComplexTab(toast) {
+    const wrap = el('div', { style: 'display: flex; flex-direction: column; gap: 12px;' });
+
+    // Section 1: SledgeData ScriptableObject Tuning
+    const sledgeSec = el('div', { class: 'srmm-section' }, [
+      el('div', { class: 'srmm-section-title' }, [el('span', { text: '🛠 Sledge Physics Tuning (ScriptableObject)' })])
+    ]);
+
+    // Jump Launch Impulse
+    const jumpPowIn = makeInput({ class: 'srmm-input', value: '30', type: 'number' });
+    const jumpPowBtn = el('button', { class: 'srmm-btn small primary', text: 'Apply' });
+    jumpPowBtn.onclick = () => {
+      const v = parseFloat(jumpPowIn.value) || 25;
+      callAPI(api => api.Player.setSledgeData({ jumpSpeed: v }));
+      toast(`Jump Impulse set to ${v}`, 'success');
+    };
+    addRow(sledgeSec, 'Jump Velocity Impulse', 'Upward vertical launch velocity', el('div', { class: 'srmm-row-controls' }, [jumpPowIn, jumpPowBtn]));
+
+    // Rotation / Steering Agility
+    const steerIn = makeInput({ class: 'srmm-input', value: '3.0', type: 'number' });
+    const steerBtn = el('button', { class: 'srmm-btn small', text: 'Apply' });
     steerBtn.onclick = () => {
       const v = parseFloat(steerIn.value) || 1.0;
       callAPI(api => api.Player.setSledgeData({ rotationSpeed: v * 30 }));
-      toast(`Steering agility boosted`, 'success');
+      toast(`Steering agility multiplier: ${v}x`, 'success');
     };
-    addRow(sec, 'Steering Agility', 'Angular turn responsiveness', el('div', { class: 'srmm-row-controls' }, [steerIn, steerBtn]));
+    addRow(sledgeSec, 'Steering Agility Rate', 'Angular turn responsiveness', el('div', { class: 'srmm-row-controls' }, [steerIn, steerBtn]));
 
-    // 7. Instant Respawn & Manual Jump Actions
-    const actRow = el('div', { class: 'srmm-row', style: 'border:none' }, [
-      el('button', { class: 'srmm-btn small primary', text: '⬆ Trigger Jump', onclick: () => { callAPI(api => api.Player.jump()); toast('Jump!', 'info'); } }),
-      el('button', { class: 'srmm-btn small', text: '↺ Respawn Summit', onclick: () => { callAPI(api => api.Player.respawn()); toast('Respawned at summit', 'info'); } })
-    ]);
-    sec.appendChild(actRow);
-
-    wrap.appendChild(sec);
-    return wrap;
-  }
-
-  /* ============================================================
-   * TAB 2: GAME & ECONOMY
-   * ============================================================ */
-  function buildEconomyTab(toast) {
-    const wrap = el('div', { style: 'display: flex; flex-direction: column; gap: 12px;' });
-
-    const sec = el('div', { class: 'srmm-section' }, [
-      el('div', { class: 'srmm-section-title' }, [el('span', { text: 'Score & Gifts Economy' })])
-    ]);
-
-    // 1. Gift Granter
-    const giftPresets = el('div', { class: 'srmm-row', style: 'border:none' }, [
-      el('button', { class: 'srmm-btn small', text: '+500 Gifts', onclick: () => { callAPI(api => api.Game.setGifts(500)); toast('+500 Gifts added', 'success'); } }),
-      el('button', { class: 'srmm-btn small', text: '+2,500 Gifts', onclick: () => { callAPI(api => api.Game.setGifts(2500)); toast('+2,500 Gifts added', 'success'); } }),
-      el('button', { class: 'srmm-btn small primary', text: 'Max (999,999)', onclick: () => { callAPI(api => api.Game.lockGifts(999999)); toast('Gifts locked at 999,999', 'success'); } })
-    ]);
-    addRow(sec, 'Add Gifts / Presents', 'Direct session gift boost', giftPresets);
-
-    // 2. Custom Score Injection
-    const scoreIn = el('input', { class: 'srmm-input', placeholder: '99999' });
-    const scoreBtn = el('button', { class: 'srmm-btn small primary', text: 'Set Score' });
-    scoreBtn.onclick = () => {
-      const v = parseInt(scoreIn.value, 10) || 10000;
-      callAPI(api => api.Game.setScore(v));
-      toast(`Score set to ${v}`, 'success');
+    // Acceleration Ramp Rate
+    const accelIn = makeInput({ class: 'srmm-input', value: '15', type: 'number' });
+    const accelBtn = el('button', { class: 'srmm-btn small', text: 'Apply' });
+    accelBtn.onclick = () => {
+      const v = parseFloat(accelIn.value) || 5;
+      callAPI(api => api.Player.setSledgeData({ speedAcceleration: v }));
+      toast(`Acceleration rate: ${v}`, 'success');
     };
-    addRow(sec, 'Distance Score Setter', 'Inject any score directly', el('div', { class: 'srmm-row-controls' }, [scoreIn, scoreBtn]));
+    addRow(sledgeSec, 'Base Acceleration Ramp', 'Speed gain acceleration rate', el('div', { class: 'srmm-row-controls' }, [accelIn, accelBtn]));
 
-    // 3. Score Multiplier
-    const multRow = el('div', { class: 'srmm-row', style: 'border:none' }, [
-      el('button', { class: 'srmm-btn small', text: '2x', onclick: () => { callAPI(api => api.Game.setScore((api.Game.getScore() || 100) * 2)); toast('Score doubled (2x)', 'success'); } }),
-      el('button', { class: 'srmm-btn small', text: '5x', onclick: () => { callAPI(api => api.Game.setScore((api.Game.getScore() || 100) * 5)); toast('Score 5x', 'success'); } }),
-      el('button', { class: 'srmm-btn small', text: '10x', onclick: () => { callAPI(api => api.Game.setScore((api.Game.getScore() || 100) * 10)); toast('Score 10x', 'success'); } }),
-      el('button', { class: 'srmm-btn small primary', text: '50x', onclick: () => { callAPI(api => api.Game.setScore((api.Game.getScore() || 100) * 50)); toast('Score 50x', 'success'); } })
-    ]);
-    addRow(sec, 'Score Multiplier', 'Quick multiplication factor', multRow);
-
-    // 4. Bypass Rewarded Ads
-    const adBtn = el('button', { class: 'srmm-btn small primary', text: 'Claim Ad Reward' });
-    adBtn.onclick = () => {
-      callAPI(api => api.Game.showRewardedAd());
-      toast('Rewarded Ad bonus granted!', 'success');
-    };
-    addRow(sec, 'Bypass Rewarded Ads', 'Get ad rewards without ads', adBtn);
-
-    // 5. Game Flow Controls
-    const flowRow = el('div', { class: 'srmm-row', style: 'border:none' }, [
-      el('button', { class: 'srmm-btn small', text: '▶ Start Play', onclick: () => { callAPI(api => api.Game.startPlay()); toast('Run started', 'info'); } }),
-      el('button', { class: 'srmm-btn small', text: '⏸ Pause', onclick: () => { callAPI(api => api.Game.pause()); toast('Paused', 'info'); } }),
-      el('button', { class: 'srmm-btn small', text: '⏵ Resume', onclick: () => { callAPI(api => api.Game.resume()); toast('Resumed', 'info'); } }),
-      el('button', { class: 'srmm-btn small', text: '☰ Menu', onclick: () => { callAPI(api => api.Game.returnToMenu()); toast('Returned to Menu', 'info'); } })
-    ]);
-    addRow(sec, 'Game Lifecycle Controls', 'Direct game mode triggers', flowRow);
-
-    wrap.appendChild(sec);
-    return wrap;
-  }
-
-  /* ============================================================
-   * TAB 3: SKINS & VISUALS
-   * ============================================================ */
-  function buildVisualsTab(toast) {
-    const wrap = el('div', { style: 'display: flex; flex-direction: column; gap: 12px;' });
-
-    const sec = el('div', { class: 'srmm-section' }, [
-      el('div', { class: 'srmm-section-title' }, [el('span', { text: 'Customization & Shaders' })])
+    // Section 2: Visual Shaders & Canvas Teleport
+    const visSec = el('div', { class: 'srmm-section' }, [
+      el('div', { class: 'srmm-section-title' }, [el('span', { text: '🎨 Canvas Scene & Post-FX Shaders' })])
     ]);
 
-    // 1. Unlock All Sleds
-    const unlockBtn = el('button', { class: 'srmm-btn small primary', text: 'Unlock All Sleds' });
-    unlockBtn.onclick = () => {
-      callAPI(api => api.Skins.unlockAll());
-      toast('All Sled Skins Unlocked', 'success');
-    };
-    addRow(sec, 'Unlock All Sleds', 'Unlocks every skin in the shop', unlockBtn);
-
-    // 2. Direct Skin Switcher
-    const skinSel = el('select', { class: 'srmm-select' }, [
+    // Skin Selector
+    const skinSel = makeSelect({ class: 'srmm-select' }, [
       el('option', { value: '0', text: 'Classic Wood Sled' }),
       el('option', { value: '1', text: 'Standard Sled' }),
       el('option', { value: '2', text: 'Modern Sled' }),
@@ -607,14 +629,14 @@
       el('option', { value: '5', text: 'Hover Sled' })
     ]);
     skinSel.onchange = () => {
-      callAPI(api => api.Skins.setCurrentSkin(parseInt(skinSel.value, 10)));
+      callAPI(api => api.Skins.setCurrentSkin(parseInt(skinSel.value, 10)), () => directUnitySend('GameControl', 'set_currentSkin', parseInt(skinSel.value, 10)));
       toast(`Equipped ${skinSel.options[skinSel.selectedIndex].text}`, 'info');
     };
-    addRow(sec, 'Equip Sled Skin', 'Instant model replacement', skinSel);
+    addRow(visSec, 'Direct Skin Equip', 'Instant model replacement', skinSel);
 
-    // 3. Canvas Teleporter
-    const canvasSel = el('select', { class: 'srmm-select' }, [
-      el('option', { value: '', text: 'Teleport to…' }),
+    // Canvas Teleporter
+    const canvasSel = makeSelect({ class: 'srmm-select' }, [
+      el('option', { value: '', text: 'Select Canvas…' }),
       el('option', { value: 'playCanvasPrefab', text: 'Play Screen' }),
       el('option', { value: 'shopCanvasPrefab', text: 'Shop Screen' }),
       el('option', { value: 'sledsCanvasPrefab', text: 'Sleds Garage' }),
@@ -623,14 +645,14 @@
     ]);
     canvasSel.onchange = () => {
       if (canvasSel.value) {
-        callAPI(api => api.UI.changeCanvas(canvasSel.value));
-        toast(`Switched canvas to ${canvasSel.value}`, 'info');
+        callAPI(api => api.UI.changeCanvas(canvasSel.value), () => directUnitySend('GUIControl', 'ChangeCanvas', canvasSel.value));
+        toast(`Canvas: ${canvasSel.value}`, 'info');
       }
     };
-    addRow(sec, 'Canvas Teleporter', 'Direct UI scene transition', canvasSel);
+    addRow(visSec, 'Canvas Teleporter', 'Direct UI scene transition', canvasSel);
 
-    // 4. Atmosphere Shaders
-    const shaderSel = el('select', { class: 'srmm-select' }, [
+    // Atmosphere Shaders
+    const shaderSel = makeSelect({ class: 'srmm-select' }, [
       el('option', { value: 'none', text: 'Default Slope' }),
       el('option', { value: 'cyberpunk', text: 'Cyberpunk Neon' }),
       el('option', { value: 'aurora', text: 'Borealis Aurora' }),
@@ -641,7 +663,7 @@
     ]);
     shaderSel.onchange = () => {
       const canvas = document.querySelector('#unity-canvas, #gameContainer canvas, canvas');
-      if (!canvas) { toast('Canvas not found', 'danger'); return; }
+      if (!canvas) { toast('Canvas element not found', 'danger'); return; }
       switch (shaderSel.value) {
         case 'cyberpunk':
           canvas.style.filter = 'hue-rotate(180deg) saturate(2.2) contrast(1.25)'; break;
@@ -660,36 +682,36 @@
       }
       toast(`Shader: ${shaderSel.options[shaderSel.selectedIndex].text}`, 'info');
     };
-    addRow(sec, 'Atmosphere Shaders', 'Real-time WebGL canvas post-FX', shaderSel);
+    addRow(visSec, 'Atmosphere Shader', 'Real-time WebGL post-processing', shaderSel);
 
-    // 5. 3D World Text Injector
-    const textIn = el('input', { class: 'srmm-input wide', placeholder: 'Message' });
-    const textBtn = el('button', { class: 'srmm-btn small primary', text: 'Show 3D' });
-    textBtn.onclick = () => {
-      if (textIn.value) {
-        callAPI(api => api.UI.show3DText(textIn.value));
-        toast('3D Text Triggered', 'info');
-      }
-    };
-    addRow(sec, '3D World Banner', 'Displays 3D text in world', el('div', { class: 'srmm-row-controls' }, [textIn, textBtn]));
-
-    wrap.appendChild(sec);
-    return wrap;
-  }
-
-  /* ============================================================
-   * TAB 4: UNITY DISPATCHER (Direct SendMessage Console)
-   * ============================================================ */
-  function buildConsoleTab(toast) {
-    const wrap = el('div', { style: 'display: flex; flex-direction: column; gap: 12px;' });
-
-    const sec = el('div', { class: 'srmm-section' }, [
-      el('div', { class: 'srmm-section-title' }, [el('span', { text: 'Direct Unity SendMessage Dispatcher' })])
+    // Section 3: WASM Memory Pointer Inspector
+    const memSec = el('div', { class: 'srmm-section' }, [
+      el('div', { class: 'srmm-section-title' }, [el('span', { text: '🔍 WASM Heap & Pointer Inspector' })])
     ]);
 
-    const targetIn = el('input', { class: 'srmm-input wide srmm-mono', placeholder: 'Target GameObject (e.g. Player, GameControl)' });
-    const methodIn = el('input', { class: 'srmm-input wide srmm-mono', placeholder: 'Method Name (e.g. Jump, Play, Spawn)' });
-    const argIn = el('input', { class: 'srmm-input wide srmm-mono', placeholder: 'Parameter (optional)' });
+    const memStatusText = el('span', { class: 'srmm-mono', text: '0x00000000', style: 'font-size: 11px; color: var(--neon-cyan);' });
+    const scanBtn = el('button', { class: 'srmm-btn small', text: 'Inspect Pointers' });
+    scanBtn.onclick = () => {
+      const api = getAPI();
+      if (api && api.Context) {
+        const pPtr = api.Player.getPointer();
+        memStatusText.textContent = pPtr ? `PlayerControl: 0x${pPtr.toString(16).toUpperCase()}` : 'Heap Unbound / Searching';
+        toast(pPtr ? `PlayerControl at 0x${pPtr.toString(16)}` : 'WASM Heap Active', 'info');
+      } else {
+        memStatusText.textContent = 'Direct WebGL Mode';
+        toast('Direct WebGL Bridge Active', 'info');
+      }
+    };
+    addRow(memSec, 'Player Instance Pointer', '32-bit Il2Cpp instance location', el('div', { class: 'srmm-row-controls' }, [memStatusText, scanBtn]));
+
+    // Section 4: Direct Unity Dispatcher
+    const consoleSec = el('div', { class: 'srmm-section' }, [
+      el('div', { class: 'srmm-section-title' }, [el('span', { text: '💻 Raw Unity SendMessage Dispatcher' })])
+    ]);
+
+    const targetIn = makeInput({ class: 'srmm-input wide srmm-mono', placeholder: 'Target GameObject (e.g. Player, GameControl)' });
+    const methodIn = makeInput({ class: 'srmm-input wide srmm-mono', placeholder: 'Method Name (e.g. Jump, Play, setSpeed)' });
+    const argIn = makeInput({ class: 'srmm-input wide srmm-mono', placeholder: 'Parameter (optional string/number)' });
     const sendBtn = el('button', { class: 'srmm-btn small primary', text: 'Dispatch SendMessage' });
 
     sendBtn.onclick = () => {
@@ -700,20 +722,31 @@
         toast('Target & Method required', 'danger');
         return;
       }
-      const ok = callAPI(api => api.sendMessage(target, method, arg !== '' ? arg : undefined));
+
+      let parsedArg = arg;
+      if (arg !== '' && !isNaN(arg)) parsedArg = Number(arg);
+
+      const ok = callAPI(
+        api => api.sendMessage(target, method, arg !== '' ? parsedArg : undefined),
+        () => directUnitySend(target, method, arg !== '' ? parsedArg : undefined)
+      );
+
       if (ok) {
-        toast(`Dispatched: ${target}.${method}()`, 'success');
+        toast(`Dispatched: ${target}.${method}(${arg})`, 'success');
       } else {
         toast(`Failed: ${target}.${method}()`, 'danger');
       }
     };
 
-    sec.appendChild(el('div', { class: 'srmm-row', style: 'border:none' }, [targetIn]));
-    sec.appendChild(el('div', { class: 'srmm-row', style: 'border:none' }, [methodIn]));
-    sec.appendChild(el('div', { class: 'srmm-row', style: 'border:none' }, [argIn]));
-    sec.appendChild(el('div', { class: 'srmm-row', style: 'border:none' }, [sendBtn]));
+    consoleSec.appendChild(el('div', { class: 'srmm-row', style: 'border:none' }, [targetIn]));
+    consoleSec.appendChild(el('div', { class: 'srmm-row', style: 'border:none' }, [methodIn]));
+    consoleSec.appendChild(el('div', { class: 'srmm-row', style: 'border:none' }, [argIn]));
+    consoleSec.appendChild(el('div', { class: 'srmm-row', style: 'border:none' }, [sendBtn]));
 
-    wrap.appendChild(sec);
+    wrap.appendChild(sledgeSec);
+    wrap.appendChild(visSec);
+    wrap.appendChild(memSec);
+    wrap.appendChild(consoleSec);
     return wrap;
   }
 
@@ -723,23 +756,21 @@
   function buildPanel(shadow) {
     const toast = createToaster(shadow);
 
-    // Floating Action Button
     const fab = el('button', { class: 'srmm-fab hidden', title: 'Open Mod Console (Insert)' }, [
       el('span', { text: '❄' })
     ]);
 
     const root = el('div', { class: 'srmm-root hidden' });
 
-    // Header with status indicator & controls
     const statusDot = el('span', { class: 'srmm-dot' });
-    const statusText = el('span', { text: 'Game Connected' });
+    const statusText = el('span', { text: 'Unity Connected' });
     const minBtn = el('button', { class: 'srmm-headbtn', text: '–', title: 'Minimize' });
     const closeBtn = el('button', { class: 'srmm-headbtn', text: '✕', title: 'Close (Insert to Toggle)' });
 
     const head = el('div', { class: 'srmm-head' }, [
       el('div', { class: 'srmm-logo-badge', text: '❄' }),
       el('div', { class: 'srmm-title' }, [
-        el('b', { text: 'Snow Rider 3D' }),
+        el('b', { text: 'Snow Rider 3D Console' }),
         el('div', { class: 'srmm-status-line' }, [statusDot, statusText])
       ]),
       minBtn,
@@ -752,10 +783,10 @@
     });
     closeBtn.addEventListener('click', () => hidePanel());
 
-    // Speed Gear Bar
+    // Speed Gear Engine
     const speedBar = el('div', { class: 'srmm-speedgear' });
     const speedLabel = el('div', { class: 'srmm-speed-label' }, [
-      el('span', { text: '⚡ Speed:' }),
+      el('span', { text: '⚡ TimeScale:' }),
       el('span', { id: 'srmm-cur-speed', text: '1.0x', style: 'color:#fff' })
     ]);
     const presets = el('div', { class: 'srmm-speed-presets' });
@@ -764,7 +795,10 @@
       b.onclick = () => {
         presets.querySelectorAll('.srmm-preset-btn').forEach(btn => btn.classList.remove('active'));
         b.classList.add('active');
-        callAPI(api => api.Game.setTimeScale(rate));
+        callAPI(api => api.Game.setTimeScale(rate), () => {
+          directUnitySend('SlowMotion', 'setSpeed', rate);
+          directUnitySend('SlowMotion', 'Apply', rate);
+        });
         shadow.getElementById('srmm-cur-speed').textContent = `${rate}x`;
         toast(`Game Speed: ${rate}x`, 'info');
       };
@@ -773,29 +807,22 @@
     speedBar.appendChild(speedLabel);
     speedBar.appendChild(presets);
 
-    // Navigation Tabs
+    // Primary Tabs: BASIC & COMPLEX
     const tabIndicator = el('div', { class: 'srmm-tab-indicator' });
-    const tab1Btn = el('button', { class: 'srmm-tab-btn active', text: 'Physics' });
-    const tab2Btn = el('button', { class: 'srmm-tab-btn', text: 'Economy' });
-    const tab3Btn = el('button', { class: 'srmm-tab-btn', text: 'Skins & Visuals' });
-    const tab4Btn = el('button', { class: 'srmm-tab-btn', text: 'Dispatcher' });
-    const tabs = el('div', { class: 'srmm-tabs' }, [tabIndicator, tab1Btn, tab2Btn, tab3Btn, tab4Btn]);
+    const basicTabBtn = el('button', { class: 'srmm-tab-btn active', text: 'Basic' });
+    const complexTabBtn = el('button', { class: 'srmm-tab-btn', text: 'Complex' });
+    const tabs = el('div', { class: 'srmm-tabs' }, [tabIndicator, basicTabBtn, complexTabBtn]);
 
     const body = el('div', { class: 'srmm-body' });
-    const tab1 = buildPlayerTab(toast);
-    const tab2 = buildEconomyTab(toast);
-    const tab3 = buildVisualsTab(toast);
-    const tab4 = buildConsoleTab(toast);
-    tab2.style.display = 'none';
-    tab3.style.display = 'none';
-    tab4.style.display = 'none';
-    body.appendChild(tab1);
-    body.appendChild(tab2);
-    body.appendChild(tab3);
-    body.appendChild(tab4);
+    const basicTab = buildBasicTab(toast);
+    const complexTab = buildComplexTab(toast);
+    complexTab.style.display = 'none';
 
-    const allTabs = [tab1, tab2, tab3, tab4];
-    const allBtns = [tab1Btn, tab2Btn, tab3Btn, tab4Btn];
+    body.appendChild(basicTab);
+    body.appendChild(complexTab);
+
+    const allTabs = [basicTab, complexTab];
+    const allBtns = [basicTabBtn, complexTabBtn];
 
     function selectTab(index) {
       allBtns.forEach((b, i) => b.classList.toggle('active', i === index));
@@ -814,7 +841,6 @@
       tabIndicator.style.transform = `translateX(${active.offsetLeft}px)`;
     }
 
-    // Corner Resizer Handle
     const resizer = el('div', { class: 'srmm-resizer' });
 
     root.appendChild(head);
@@ -826,7 +852,6 @@
     shadow.appendChild(fab);
     shadow.appendChild(root);
 
-    // Apply Dragging with Jiggle Physics & Resizing
     makeDraggableWithJiggle(head, root);
     makeResizable(root, resizer);
 
@@ -853,13 +878,12 @@
       }
     });
 
-    // Check GameAPI status
     setInterval(() => {
       const api = getAPI();
-      const ready = api && api.isReady();
+      const ready = !!(api && api.isReady()) || !!(window.gameInstance || window.unityInstance);
       statusDot.style.background = ready ? 'var(--neon-green)' : 'var(--neon-cyan)';
       statusDot.style.boxShadow = ready ? '0 0 8px var(--neon-green)' : '0 0 8px var(--neon-cyan)';
-      statusText.textContent = ready ? 'Unity Connected' : 'GameAPI Ready';
+      statusText.textContent = ready ? 'Unity Active' : 'Waiting for Game';
     }, 1000);
   }
 
