@@ -2,27 +2,34 @@
     'use strict';
     console.log("[Mod Loader] Active");
 
-    // Intercept Unity's instance initialization to hook game functions at runtime
-    let originalCreateInstance = window.createUnityInstance;
-    if (originalCreateInstance) {
-        window.createUnityInstance = async function(canvas, config, onProgress) {
-            const instance = await originalCreateInstance(canvas, config, onProgress);
-            window.gameInstance = instance;
-            console.log("[Mod Loader] Game instance captured. Applying mods...");
-            
-            // Run your modification logic here once the game boots
-            applyMods(instance);
-            
-            return instance;
-        };
+    let wasmHeap = null;
+
+    // 1. Intercept WebAssembly Memory allocation to grab the live heap buffer
+    const originalMemory = window.WebAssembly.Memory;
+    window.WebAssembly.Memory = function(descriptor) {
+        const memory = new originalMemory(descriptor);
+        wasmHeap = memory.buffer;
+        console.log("[Mod Loader] WASM Memory Heap Captured!");
+        return memory;
+    };
+
+    // 2. Continuous loop to enforce infinite values and god mode
+    function applyNativeMods() {
+        if (wasmHeap) {
+            try {
+                const dataView = new DataView(wasmHeap);
+
+                // TODO: Once you find the exact memory offset or pointer for your present counter,
+                // you write to it directly here every frame so it never drops or stays at 0:
+                // dataView.setInt32(YOUR_PRESENT_OFFSET, 999999, true);
+
+            } catch (e) {
+                // Suppress errors if the buffer detaches during scene transitions
+            }
+        }
+        requestAnimationFrame(applyNativeMods);
     }
 
-    function applyMods(instance) {
-        // Here you can hook into instance methods or monitor the heap
-        setInterval(() => {
-            try {
-                // If using heap memory views, apply infinite values here
-            } catch(e) {}
-        }, 1000);
-    }
+    // Start the modification loop
+    requestAnimationFrame(applyNativeMods);
 })();
