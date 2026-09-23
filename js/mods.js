@@ -2,34 +2,34 @@
     'use strict';
     console.log("[Mod Loader] Active");
 
-    let wasmHeap = null;
-
-    // 1. Intercept WebAssembly Memory allocation to grab the live heap buffer
-    const originalMemory = window.WebAssembly.Memory;
-    window.WebAssembly.Memory = function(descriptor) {
-        const memory = new originalMemory(descriptor);
-        wasmHeap = memory.buffer;
-        console.log("[Mod Loader] WASM Memory Heap Captured!");
-        return memory;
+    // Hook into Unity's Module configuration object before it loads
+    window.Module = window.Module || {};
+    
+    const originalOnRuntimeInitialized = window.Module.onRuntimeInitialized;
+    window.Module.onRuntimeInitialized = function() {
+        if (originalOnRuntimeInitialized) {
+            originalOnRuntimeInitialized();
+        }
+        console.log("[Mod Loader] Unity runtime initialized. Accessing memory...");
+        startModLoop();
     };
 
-    // 2. Continuous loop to enforce infinite values and god mode
-    function applyNativeMods() {
-        if (wasmHeap) {
+    function startModLoop() {
+        function tick() {
             try {
-                const dataView = new DataView(wasmHeap);
+                // Unity exposes the WASM memory buffer globally via Module.HEAP8 or HEAPF32
+                if (window.Module && window.Module.HEAP8) {
+                    const buffer = window.Module.HEAP8.buffer;
+                    const dataView = new DataView(buffer);
 
-                // TODO: Once you find the exact memory offset or pointer for your present counter,
-                // you write to it directly here every frame so it never drops or stays at 0:
-                // dataView.setInt32(YOUR_PRESENT_OFFSET, 999999, true);
-
+                    // TODO: Insert your offset writes here once you have them, e.g.:
+                    // dataView.setInt32(PRESENT_OFFSET, 99999, true);
+                }
             } catch (e) {
-                // Suppress errors if the buffer detaches during scene transitions
+                // Suppress errors during frame ticks
             }
+            requestAnimationFrame(tick);
         }
-        requestAnimationFrame(applyNativeMods);
+        requestAnimationFrame(tick);
     }
-
-    // Start the modification loop
-    requestAnimationFrame(applyNativeMods);
 })();
