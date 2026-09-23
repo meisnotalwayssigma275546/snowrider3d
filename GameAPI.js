@@ -5,12 +5,12 @@
  * - Runtime: Unity WebGL (Il2Cpp compiled to WebAssembly 32-bit)
  * - Assembly: Assembly-CSharp.dll
  * 
- * Provides bi-directional JS <-> WASM control over:
- * - Player State (speed, physics, jumps, orientation, health, sledge data)
+ * Provides direct JS <-> Unity control over:
+ * - Player State (speed, physics, jumps, orientation, god mode, sledge data)
  * - Game Flow (score, gifts/currency, lifecycle modes, time scale, ads)
  * - UI & Text (DataText variables, Text3D, LocalizedText, Canvas controllers)
  * - Customization / Inventory (skins, owned sleds)
- * - Raw WASM linear memory inspection & manipulation (HEAP32, HEAPF32, HEAPU8)
+ * - Low-level WASM memory inspection & manipulation (HEAP32, HEAPF32, HEAPU8)
  */
 
 (function (global) {
@@ -111,46 +111,42 @@
     guiControlPtr: 0,
     cachedTextComponents: new Map(),
 
-    init() {
-      // Auto-detect standard Unity WebGL instance bindings
+    init(explicitExports) {
       if (typeof global.unityInstance !== 'undefined') {
         this.unityInstance = global.unityInstance;
       } else if (typeof global.gameInstance !== 'undefined') {
         this.unityInstance = global.gameInstance;
       }
 
-      // Auto-detect Emscripten WebAssembly Module
-      if (typeof global.Module !== 'undefined') {
+      if (explicitExports) {
+        this.module = explicitExports;
+      } else if (typeof global.Module !== 'undefined') {
         this.module = global.Module;
       } else if (this.unityInstance && this.unityInstance.Module) {
         this.module = this.unityInstance.Module;
       }
-
-      console.log('[GameAPI] Initialized. UnityInstance:', !!this.unityInstance, 'WASM Module:', !!this.module);
     }
   };
 
   // --- Low-Level Memory Helpers ---
   const Memory = {
+    init(exports) {
+      BridgeContext.init(exports);
+    },
+
     getHEAP32() {
-      if (BridgeContext.module && BridgeContext.module.HEAP32) {
-        return BridgeContext.module.HEAP32;
-      }
-      return null;
+      const mod = BridgeContext.module || global.Module;
+      return mod && mod.HEAP32 ? mod.HEAP32 : null;
     },
 
     getHEAPF32() {
-      if (BridgeContext.module && BridgeContext.module.HEAPF32) {
-        return BridgeContext.module.HEAPF32;
-      }
-      return null;
+      const mod = BridgeContext.module || global.Module;
+      return mod && mod.HEAPF32 ? mod.HEAPF32 : null;
     },
 
     getHEAPU8() {
-      if (BridgeContext.module && BridgeContext.module.HEAPU8) {
-        return BridgeContext.module.HEAPU8;
-      }
-      return null;
+      const mod = BridgeContext.module || global.Module;
+      return mod && mod.HEAPU8 ? mod.HEAPU8 : null;
     },
 
     readInt32(ptr) {
@@ -203,7 +199,6 @@
 
     readIl2CppString(ptr) {
       if (!ptr) return '';
-      // In Il2Cpp 32-bit: String object has 0x8: length (int32), 0xC: chars (UTF-16)
       const length = this.readInt32(ptr + 0x08);
       if (length <= 0 || length > 4096) return '';
       const heapU8 = this.getHEAPU8();
@@ -233,9 +228,6 @@
       return true;
     },
 
-    /**
-     * Resolves a chained pointer traversal from a base pointer through multiple byte offsets
-     */
     deref(basePtr, offsets) {
       let current = basePtr;
       for (let i = 0; i < offsets.length; i++) {
@@ -248,12 +240,13 @@
 
   // --- High-Level Unity SendMessage Invoker ---
   function sendUnityMessage(targetObject, method, param) {
-    if (BridgeContext.unityInstance && typeof BridgeContext.unityInstance.SendMessage === 'function') {
+    const inst = BridgeContext.unityInstance || global.unityInstance || global.gameInstance;
+    if (inst && typeof inst.SendMessage === 'function') {
       try {
         if (param !== undefined) {
-          BridgeContext.unityInstance.SendMessage(targetObject, method, param);
+          inst.SendMessage(targetObject, method, param);
         } else {
-          BridgeContext.unityInstance.SendMessage(targetObject, method);
+          inst.SendMessage(targetObject, method);
         }
         return true;
       } catch (err) {
@@ -262,6 +255,57 @@
     }
     return false;
   }
+
+  // --- Active Automation Loops (God Mode, Infinite Jump, Speed Lock) ---
+  const Automation = {
+    godMode: false,
+    infiniteJump: false,
+    bunnyHop: false,
+    speedLock: null,
+    giftLock: null,
+
+    init() {
+      // Global Spacebar interceptor for Infinite Air Jump
+      window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space' || e.key === ' ') {
+          if (Automation.infiniteJump) {
+            Player.jump();
+          }
+        }
+      });
+
+      // Frame tick loop for God Mode & continuous properties
+      const tick = () => {
+        if (Automation.godMode) {
+          // If memory pointer is discovered, lock grounded
+          if (BridgeContext.playerControlPtr) {
+            Memory.writeBool(BridgeContext.playerControlPtr + OFFSETS.PlayerControl.isGrounded, true);
+            Memory.writeBool(BridgeContext.playerControlPtr + OFFSETS.PlayerControl.alreadyJumped, false);
+          }
+        }
+
+        if (Automation.speedLock !== null) {
+          if (BridgeContext.playerControlPtr) {
+            Memory.writeFloat(BridgeContext.playerControlPtr + OFFSETS.PlayerControl.currMoveSpeed, Automation.speedLock);
+            Memory.writeFloat(BridgeContext.playerControlPtr + OFFSETS.PlayerControl.moveSpeed, Automation.speedLock);
+          }
+        }
+
+        if (Automation.giftLock !== null) {
+          if (BridgeContext.gameControlStaticPtr) {
+            Memory.writeInt32(BridgeContext.gameControlStaticPtr + OFFSETS.GameControl.giftsThisGame, Automation.giftLock);
+          }
+        }
+
+        if (Automation.bunnyHop) {
+          Player.jump();
+        }
+
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }
+  };
 
   // --- Player API ---
   const Player = {
@@ -282,12 +326,17 @@
 
     setSpeed(value) {
       const val = parseFloat(value);
+      Automation.speedLock = val;
       if (BridgeContext.playerControlPtr) {
         Memory.writeFloat(BridgeContext.playerControlPtr + OFFSETS.PlayerControl.moveSpeed, val);
         Memory.writeFloat(BridgeContext.playerControlPtr + OFFSETS.PlayerControl.currMoveSpeed, val);
       }
       sendUnityMessage('Player', 'setSpeed', val);
       return true;
+    },
+
+    clearSpeedLock() {
+      Automation.speedLock = null;
     },
 
     getCurrSpeed() {
@@ -333,6 +382,7 @@
     jump() {
       if (BridgeContext.playerControlPtr) {
         Memory.writeBool(BridgeContext.playerControlPtr + OFFSETS.PlayerControl.alreadyJumped, false);
+        Memory.writeBool(BridgeContext.playerControlPtr + OFFSETS.PlayerControl.isGrounded, true);
       }
       return sendUnityMessage('Player', 'Jump') || sendUnityMessage('PlayerControl', 'Jump');
     },
@@ -343,6 +393,24 @@
 
     respawn() {
       return sendUnityMessage('Player', 'Spawn') || sendUnityMessage('PlayerControl', 'Spawn');
+    },
+
+    setGodMode(enable) {
+      Automation.godMode = !!enable;
+      if (Automation.godMode) {
+        this.setGrounded(true);
+      }
+      return Automation.godMode;
+    },
+
+    setInfiniteJump(enable) {
+      Automation.infiniteJump = !!enable;
+      return Automation.infiniteJump;
+    },
+
+    setBunnyHop(enable) {
+      Automation.bunnyHop = !!enable;
+      return Automation.bunnyHop;
     },
 
     simulateLeft(pressed) {
@@ -359,7 +427,6 @@
       }
     },
 
-    // Direct access to SledgeData ScriptableObject parameters
     getSledgeData() {
       if (!BridgeContext.playerControlPtr) return null;
       const dataPtr = Memory.readInt32(BridgeContext.playerControlPtr + OFFSETS.PlayerControl.data);
@@ -424,6 +491,15 @@
       return true;
     },
 
+    lockGifts(amount) {
+      Automation.giftLock = parseInt(amount, 10);
+      this.setGifts(Automation.giftLock);
+    },
+
+    clearGiftLock() {
+      Automation.giftLock = null;
+    },
+
     getGameMode() {
       const modes = ['intro', 'main', 'play', 'end'];
       if (BridgeContext.gameControlStaticPtr) {
@@ -461,7 +537,6 @@
 
     setTimeScale(scale) {
       const val = parseFloat(scale);
-      // Unity's SlowMotion component manipulation
       sendUnityMessage('SlowMotion', 'setSpeed', val);
       sendUnityMessage('SlowMotion', 'Apply', val);
       return true;
@@ -472,18 +547,18 @@
     },
 
     showRewardedAd() {
-      return sendUnityMessage('GameManager', 'ShowRewardedAd');
+      sendUnityMessage('GameManager', 'OnRewardedVideoSuccess');
+      sendUnityMessage('GameManagerGD', 'OnRewardedVideoSuccess');
+      return true;
     }
   };
 
   // --- UI & Text Control API ---
   const UI = {
     setText(elementName, newText) {
-      // 1. Try SendMessage directly on matching GameObject
       if (sendUnityMessage(elementName, 'SetText', String(newText))) return true;
       if (sendUnityMessage(elementName, 'Show', String(newText))) return true;
 
-      // 2. Check cached Text components
       if (BridgeContext.cachedTextComponents.has(elementName)) {
         const textPtr = BridgeContext.cachedTextComponents.get(elementName);
         return Memory.writeIl2CppString(textPtr, String(newText));
@@ -517,9 +592,7 @@
   // --- Skins & Inventory API ---
   const Skins = {
     unlockAll() {
-      // In SledSkinControl: List<SledSkin> has isOwned flags
       sendUnityMessage('SledSkinControl', 'Read');
-      // Triggers custom skin unlock message if listener present
       sendUnityMessage('ShopGUIControl', 'OnClickSleds');
       return true;
     },
@@ -531,17 +604,21 @@
 
   // --- Export GameAPI to global window ---
   global.GameAPI = {
-    init: () => BridgeContext.init(),
+    init: (exports) => BridgeContext.init(exports),
+    isReady: () => !!(BridgeContext.unityInstance || global.unityInstance || global.gameInstance),
+    sendMessage: (target, method, param) => sendUnityMessage(target, method, param),
     Player,
     Game,
     UI,
     Skins,
     Memory,
+    Automation,
     OFFSETS,
     Context: BridgeContext
   };
 
-  // Auto-init on script load
+  Automation.init();
+
   if (typeof document !== 'undefined') {
     if (document.readyState === 'complete' || document.readyState === 'interactive') {
       BridgeContext.init();
