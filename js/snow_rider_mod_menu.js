@@ -8,7 +8,6 @@
  * - Complex Tab: SledgeData Physics Engine, Memory Pointers, Shaders, Canvas Teleport & Dispatcher
  * - Input Propagation Isolation (Fixes Unity stealing number/keyboard inputs)
  * - Inertia Jiggle Physics & Freeform Resizable Window
- */
 
 ;(function () {
   'use strict';
