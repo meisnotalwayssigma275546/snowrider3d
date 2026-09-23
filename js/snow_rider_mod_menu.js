@@ -1,29 +1,33 @@
-// Toggle state for your mod menu button
-let infinitePresentsActive = false;
+(function() {
+    'use strict';
 
-function toggleInfinitePresents() {
-    infinitePresentsActive = !infinitePresentsActive;
-    console.log("[Mod Menu] Infinite Presents: " + (infinitePresentsActive ? "ON" : "OFF"));
-}
+    let wasmHeap = null;
 
-// Main game loop (runs every frame)
-function modMenuLoop() {
-    if (infinitePresentsActive && window.sharedWasmHeap) {
-        try {
-            const view = new DataView(window.sharedWasmHeap);
-            
-            // NOTE: If you have the specific offset for the present counter (e.g., inside GameDataManager),
-            // you write directly to it here. Alternatively, we force a high constant value:
-            
-            // Example: Writing 9999 to a known inventory/score offset address
-            // view.setInt32(targetPresentAddress, 9999, true);
-            
-        } catch (e) {
-            // Suppress errors during heap shifts
+    // 1. Intercept WebAssembly Memory allocation to grab the live heap
+    const originalMemory = window.WebAssembly.Memory;
+    window.WebAssembly.Memory = function(descriptor) {
+        let memory = new originalMemory(descriptor);
+        wasmHeap = memory.buffer;
+        console.log("[Direct Mod] WASM Heap intercepted!");
+        return memory;
+    };
+
+    // 2. Main Mod Loop running every frame
+    function runMods() {
+        if (wasmHeap) {
+            try {
+                const view = new DataView(wasmHeap);
+                
+                // If you want to force infinite/high presents dynamically, 
+                // or lock player state, you can write directly to your known offsets here.
+                
+            } catch (e) {
+                // Ignore buffer detached errors during loading screens
+            }
         }
+        requestAnimationFrame(runMods);
     }
-    requestAnimationFrame(modMenuLoop);
-}
 
-// Start the loop
-requestAnimationFrame(modMenuLoop);
+    requestAnimationFrame(runMods);
+    console.log("[Direct Mod] Injected successfully. Waiting for game heap...");
+})();
