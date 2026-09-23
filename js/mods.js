@@ -1,31 +1,35 @@
 (function() {
     'use strict';
-    console.log("[Score Mod] Initialized");
+    console.log("[Score Multiplier] Active and scanning heap...");
 
-    let lastProcessedScore = 0;
-    const MULTIPLIER = 10; // Adjust how much it multiplies by
+    let lastScore = -1;
 
-    // Function to hook into score updates or DOM if the score is rendered in HTML
-    function checkAndMultiplyScore(currentScore) {
-        if (currentScore > 0 && currentScore % 5 === 0 && currentScore !== lastProcessedScore) {
-            lastProcessedScore = currentScore;
-            
-            console.log(`[Score Mod] Milestone hit: ${currentScore}! Applying multiplier...`);
-            
-            // If you have access to the score variable or setter function, 
-            // you modify/multiply it here:
-            // return currentScore * MULTIPLIER;
+    function scanAndModifyScore() {
+        try {
+            if (window.Module && window.Module.HEAP32) {
+                const heap32 = window.Module.HEAP32;
+                
+                // Unity WebGL heaps are large typed arrays. We look for a changing score value.
+                // (Assuming score starts at 0, goes to 1, 2, 3, 4, 5...)
+                for (let i = 0; i < heap32.length; i++) {
+                    let val = heap32[i];
+                    
+                    // If your current score hits 5 (or 10, 15), multiply it immediately
+                    if (val > 0 && val % 5 === 0 && val === 5 && val !== lastScore) {
+                        lastScore = val;
+                        console.log(`[Score Multiplier] Found score match: ${val}. Multiplying...`);
+                        
+                        // Overwrite with a multiplied value (e.g., 50 or 500)
+                        heap32[i] = 50; 
+                        break;
+                    }
+                }
+            }
+        } catch (e) {
+            // Suppress errors during heap reads
         }
-        return currentScore;
+        setTimeout(scanAndModifyScore, 200); // Check 5 times a second
     }
 
-    // Example ticker to check score state from memory/instance if available
-    setInterval(() => {
-        try {
-            // If your game instance or window variable exposes score:
-            if (window.gameScore !== undefined) {
-                window.gameScore = checkAndMultiplyScore(window.gameScore);
-            }
-        } catch (e) {}
-    }, 100);
+    setTimeout(scanAndModifyScore, 3000); // Wait 3s for game to fully load
 })();
