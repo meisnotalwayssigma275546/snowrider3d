@@ -454,7 +454,7 @@
 
     const minBtn = el("button", { className: "min", textContent: "–" });
     const dot = el("span", { className: "dot" });
-    const head = el("div", { className: "h" }, [el("span", { textContent: "Snow Rider" }, [dot]), minBtn]);
+    const head = el("div", { className: "h" }, [el("span", { textContent: "Mod Menu" }, [dot]), minBtn]);
     const status = el("div", { className: "status", textContent: "ready - start a run for the game objects to exist" });
 
     // ---- number stepper (ints or decimals) ----
