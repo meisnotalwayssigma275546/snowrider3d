@@ -467,8 +467,8 @@
       const norm = (v) => { v = +v; if (!isFinite(v)) v = min; v = Math.round(v / step) * step; v = Math.min(max, Math.max(min, v)); return +v.toFixed(dec); };
       const set = (v, user) => { v = norm(v); input.value = v; onSet(v, user); };
       input.onchange = () => set(input.value, true);
-      minus.onclick = () => set(+input.value - 5, true);
-      plus.onclick = () => set(+input.value + 5, true);
+      minus.onclick = () => set(+input.value - 1, true);
+      plus.onclick = () => set(+input.value + 1, true);
       const wrap = el("div", { className: "numctl" }, [stepRow, quickButtons((amount) => set((parseFloat(input.value) || 0) + amount, true))]);
       // sync from the game without firing onSet, and never while you're typing
       const sync = (v) => { if (root.activeElement === input || v === undefined || v === null || !isFinite(v)) return; const n = +(+v).toFixed(dec); if (String(n) !== input.value) input.value = n; };
