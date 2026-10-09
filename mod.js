@@ -486,14 +486,14 @@
     // =========================================================
     const speed = stepper(S.spd, 1, 50, false, (v, user) => { S.spd = v; if (user) setStatus("speed x" + v); });
     const jump = stepper(S.jmp, 1, 20, false, (v, user) => { S.jmp = v; if (user) setStatus("jump x" + v); });
-    const run = stepper(0, 0, 9223372036854775807, true, guard((v, user) => { if (user) { core.sset("GameControl", "giftsThisGame", v); setStatus("presents this run = " + v); } }));
-    const total = stepper(0, -99999, 92233720368547758079, true, guard((v, user) => {
+    const run = stepper(0, 0, 9999999, true, guard((v, user) => { if (user) { core.sset("GameControl", "giftsThisGame", v); setStatus("presents this run = " + v); } }));
+    const total = stepper(0, -99999, 99999999, true, guard((v, user) => {
       if (!user) return;
       const a = core.giftSlot();
       if (!a) return setStatus("saved presents entry not found");
       core.wr("i", a, v); setStatus("total presents = " + v + " (play a run to save)");
     }));
-    const score = stepper(0, 0, 92233720368547758079, true, guard((v, user) => { if (user) { core.sset("GameControl", "score", v); setStatus("score = " + v); } }));
+    const score = stepper(0, 0, 99999999, true, guard((v, user) => { if (user) { core.sset("GameControl", "score", v); setStatus("score = " + v); } }));
 
     const runCard = el("div", { className: "card" }, [rowOf("Presents this run", "added to your total at the end", run.wrap)]);
     const sledsCard = el("div", { className: "card" }, [rowOf("Sleds", "unlock for this session / make free", el("div"))]);
@@ -609,7 +609,7 @@
         only.onclick = guard(() => {
           structs.forEach((b) => { core.stash("StructData", b, "probability"); core.set("StructData", b, "probability", b === a ? 1000 : 0); });
           core.stash("StructData", a, "minScoreToSpawn"); core.stash("StructData", a, "maxScoreToSpawn");
-          core.set("StructData", a, "minScoreToSpawn", 0); core.set("StructData", a, "maxScoreToSpawn", 92233720368547758079);
+          core.set("StructData", a, "minScoreToSpawn", 0); core.set("StructData", a, "maxScoreToSpawn", 99999999);
           drawStructs(); setStatus("only " + name + " can spawn now");
         });
         structList.appendChild(el("div", { className: "tr" }, [nm, probField, only]));
