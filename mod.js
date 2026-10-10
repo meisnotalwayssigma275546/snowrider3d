@@ -216,8 +216,8 @@
     const KEY = "srmenu_v1";
     const loadSaved = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } };
     const saved = loadSaved();
-    const S = (window.__SR = { tab: 0, spd: 1, jmp: 1, auto: false, sb: {}, gift: {}, inv: false, revive: false, low: 2, high: 10, lastDeath: null });
-    ["tab", "spd", "jmp", "auto", "sb", "gift", "inv", "low", "high"].forEach((k) => { if (saved[k] !== undefined) S[k] = saved[k]; });
+    const S = (window.__SR = { tab: 0, spd: 1, jmp: 1, auto: false, sb: {}, gift: {}, inv: false, blocked: 0 });
+    ["tab", "spd", "jmp", "auto", "sb", "gift", "inv"].forEach((k) => { if (saved[k] !== undefined) S[k] = saved[k]; });
 
     const setStatus = (t) => { status.textContent = t; };
     const guard = (fn) => (...a) => { try { return fn(...a); } catch (e) { setStatus(String(e.message || e)); } };
@@ -421,7 +421,7 @@
     const score = stepper(0, 0, 99999999, true, guard((v, user) => { if (user) { core.sset("GameControl", "score", v); setStatus("score = " + v); } }));
 
     const invSw = el("div", { className: "sw" + (S.inv ? " on" : "") }, [el("i")]);
-    invSw.onclick = () => { S.inv = !S.inv; invSw.classList.toggle("on", S.inv); setStatus("invincible " + (S.inv ? "ON - crash detection off, no falling" : "OFF")); };
+    invSw.onclick = () => { S.inv = !S.inv; invSw.classList.toggle("on", S.inv); setStatus("invincible " + (S.inv ? "ON - death is blocked" : "OFF")); };
     const runCard = el("div", { className: "card" }, [rowOf("Presents this run", "added to your total at the end", run.wrap)]);
     runCard.appendChild(el("div", { className: "btns" }, [
       btn("+100", () => { const v = core.sget("GameControl", "giftsThisGame") + 100; core.sset("GameControl", "giftsThisGame", v); run.input.value = v; setStatus("presents this run = " + v); }),
@@ -436,15 +436,8 @@
         setStatus("price = 0 on " + list.length + " sleds");
       }), (p) => setStatus("scanning " + Math.round(p * 100) + "%")))
     ]));
-    const lowCtl = stepper(S.low, 0, 1000, false, (v, user) => { S.low = v; if (user) setStatus("floor: rescue when " + v + " below the track"); }, 0.5, 1);
-    const highCtl = stepper(S.high, 0, 1000, false, (v, user) => { S.high = v; if (user) setStatus("ceiling: rescue when " + v + " above the track"); }, 0.5, 1);
-    const rescueCard = el("div", { className: "card" }, [
-      rowOf("Floor", "rescue if this far BELOW the track", lowCtl.wrap),
-      rowOf("Ceiling", "rescue if this far ABOVE the track", highCtl.wrap)
-    ]);
     const page0 = el("div", { className: "pg" }, [
-      el("div", { className: "card" }, [rowOf("Invincible", "no crashes, can't fall off the map", invSw), rowOf("Speed", "base speed + acceleration", speed.wrap), rowOf("Jump power", "jump speed", jump.wrap)]),
-      rescueCard,
+      el("div", { className: "card" }, [rowOf("Invincible", "you can't die (crashes, falling, height)", invSw), rowOf("Speed", "base speed + acceleration", speed.wrap), rowOf("Jump power", "jump speed", jump.wrap)]),
       runCard,
       el("div", { className: "card" }, [rowOf("Total presents", "saved total", total.wrap), rowOf("Score", "current run", score.wrap)]),
       sledsCard
@@ -735,26 +728,14 @@
       } catch (e) {}
     }, 600);
 
-    // ---- INVINCIBLE (real): the crash never happens ----
-    // 1) the sled's crash-detection rays get an empty layer mask, so they can't hit anything -> no "you died"
-    // 2) height controller: it learns where the track is (ground point + slope) and, while you're in the air,
-    //    pushes the sled back up if it drops too far below the track (Floor) or down if it rises too far above it (Ceiling)
-    // 3) death recorder: if you still die, the status line + console say how (below / above / inside the band)
-    // (old "flip the game state back" trick is gone: that's what shattered the sled and looped the respawn.
-    //  If you ever want it back as a fallback, type  __SR.revive = true  in the console.)
+    // ---- INVINCIBLE: death is removed at every level ----
+    // 1) crash rays get an empty layer mask, so collisions never register
+    // 2) everything the game runs when you die (GameControl.OnEnd: shatter the sled, end screen, camera...) is unhooked
+    // 3) if the game still flips to the "end" state (falling too low, flying too high, anything), it is flipped back
+    //    in the same moment - and because nothing listens to OnEnd any more, nothing visible happens
     const MASK_OFF = 84; // CollisionRay.mask (LayerMask int)
     const rayMasks = new Map();
-    let scanning = false, lastScan = 0, reported = -1, air = 0, rel = 0, lastTick = performance.now(), blocks = [], coolUntil = 0, lastMode = 0, lastTrace = 0;
-    const R = { have: false, gx: 0, gy: 0, gz: 0, slope: 0, off: 0, warned: false };
-    const trace = [];
-    const reportDeath = () => {
-      const last = trace[trace.length - 1];
-      S.lastDeath = trace.slice();
-      const where = last.rel < -S.low ? "BELOW the track by " + (-last.rel) : last.rel > S.high ? "ABOVE the track by " + last.rel : "inside the band (rel " + last.rel + ")";
-      setStatus("DIED " + where + " | grounded=" + last.grounded + " air=" + last.air + "s vSpeed=" + last.vS);
-      console.log("Snow Rider death recorder - last ~4s before dying (also in __SR.lastDeath):");
-      console.table(trace.slice(-25));
-    };
+    let scanning = false, lastScan = 0, lastMode = 0, shownKey = "", removed = 0;
     const klassOf = (n) => { try { return core.klass(n); } catch (e) { return 0; } };
     const isInst = (a, k) => k && core.okPtr(a) && core.I()[a >> 2] === k;
     const raysFromPlayer = () => {
@@ -775,69 +756,54 @@
     const restoreRays = () => {
       const k = klassOf("CollisionRay");
       rayMasks.forEach((m, a) => { if (isInst(a, k)) core.wr("i", a + MASK_OFF, m); });
-      rayMasks.clear(); reported = -1;
+      rayMasks.clear();
+    };
+    // empty a List<T> that sits at address L (layout: _items @8, _size @12); only touches things that look like a real list
+    const clearList = (L) => {
+      if (!core.okPtr(L)) return 0;
+      const h = core.I(), items = h[(L + 8) >> 2] >>> 0, size = h[(L + 12) >> 2];
+      if (size <= 0 || size > 256) return 0;
+      if (!core.okPtr(items) || h[(items + 12) >> 2] < size) return 0;
+      h[(L + 12) >> 2] = 0;
+      return size;
+    };
+    // remove every listener of GameControl.OnEnd (UnityEvent: m_Calls @8, m_PersistentCalls @12, m_CallsDirty @20)
+    const unhookEnd = () => {
+      const gs = core.statics("GameControl"); if (!gs) return -1;
+      const ev = core.rd("p", gs + 60); if (!core.okPtr(ev)) return -1;
+      const h = core.I(), u8 = core.U();
+      const calls = h[(ev + 8) >> 2] >>> 0, group = h[(ev + 12) >> 2] >>> 0;
+      let n = 0;
+      if (core.okPtr(calls)) {
+        n += clearList(h[(calls + 8) >> 2] >>> 0) + clearList(h[(calls + 12) >> 2] >>> 0) + clearList(h[(calls + 16) >> 2] >>> 0);
+        if (u8[calls + 20] <= 1) u8[calls + 20] = 0; // m_NeedsUpdate
+      }
+      if (core.okPtr(group)) n += clearList(h[(group + 8) >> 2] >>> 0);
+      if (u8[ev + 20] <= 1) u8[ev + 20] = 0; // m_CallsDirty: don't rebuild the serialized listeners
+      return n;
     };
     setInterval(() => {
       try {
-        const now = performance.now(), dt = Math.min(0.25, (now - lastTick) / 1000); lastTick = now;
-        if (!S.inv) { if (rayMasks.size) restoreRays(); air = 0; return; }
-        // forget rays of sleds that no longer exist
+        if (!S.inv) { if (rayMasks.size) restoreRays(); return; }
         const k = klassOf("CollisionRay");
         rayMasks.forEach((m, a) => { if (!isInst(a, k)) rayMasks.delete(a); });
         const list = raysFromPlayer();
-        if (!list.length && !scanning && now - lastScan > 4000) {
-          scanning = true; lastScan = now; // fallback: scan the heap for rays
+        if (!list.length && !scanning && performance.now() - lastScan > 4000) {
+          scanning = true; lastScan = performance.now(); // fallback: scan the heap for rays
           core.findAsync("CollisionRay", (found) => { found.forEach(killRay); scanning = false; });
         }
         list.forEach(killRay);
-        if (rayMasks.size !== reported) { reported = rayMasks.size; setStatus("invincible: " + reported + " crash ray(s) disabled"); }
+        const n = unhookEnd(); if (n > 0) removed += n;
 
-        // ---- height controller + death recorder (only while a run is on) ----
-        const mode = core.rd("i", core.statics("GameControl") + 40);
-        if (mode !== 2) {
-          if (lastMode === 2 && mode === 3 && trace.length) reportDeath();
-          if (mode !== 3) { R.have = false; R.slope = 0; R.off = 0; }
-          if (mode === 3 && S.revive && now >= coolUntil) { // optional old-style fallback (console: __SR.revive = true)
-            core.wr("i", core.statics("GameControl") + 40, 2);
-            blocks = blocks.filter((t) => now - t < 1000); blocks.push(now);
-            if (blocks.length > 20) { coolUntil = now + 3000; blocks = []; }
-          }
-          lastMode = mode; return;
+        // death state: flip straight back to "play"
+        const gm = core.statics("GameControl") + 40, mode = core.rd("i", gm);
+        if (mode === 3) {
+          core.wr("i", gm, 2);
+          if (lastMode === 2) S.blocked++;
         }
-        if (lastMode !== 2 && lastMode !== 3) trace.length = 0; // a fresh run starts
-        lastMode = mode;
-        const p = core.obj("PlayerControl"); if (!p) return;
-        const sp = core.get("PlayerControl", p, "collisionPoint"); if (!core.okPtr(sp)) return;
-        const f32 = (a) => core.rd("f", a);
-        const ox = f32(sp + 48), oy = f32(sp + 52), oz = f32(sp + 56); // downRay.origin = where the sled is
-        if (!isFinite(ox + oy + oz) || (ox === 0 && oy === 0 && oz === 0)) { if (!R.warned) { R.warned = true; setStatus("height control: sled position not readable (check SledgePoint.downRay)"); } return; }
-        const grounded = core.get("SledgePoint", sp, "isGrounded");
-        const vS = core.get("SledgePoint", sp, "vSpeed");
-        if (grounded) {
-          // remember the track: ground point under the sled, its slope, and how high the sled normally rides
-          const hx = f32(sp + 72), hy = f32(sp + 76), hz = f32(sp + 80);
-          if (isFinite(hx + hy + hz)) {
-            R.off = R.off ? R.off * 0.8 + (oy - hy) * 0.2 : (oy - hy);
-            if (R.have) {
-              const ds = Math.hypot(hx - R.gx, hz - R.gz);
-              if (ds > 2) { const sl = (hy - R.gy) / ds; if (isFinite(sl) && Math.abs(sl) < 3) R.slope = R.slope * 0.7 + sl * 0.3; R.gx = hx; R.gy = hy; R.gz = hz; }
-            } else { R.gx = hx; R.gy = hy; R.gz = hz; R.have = true; }
-          }
-          air = 0; rel = 0;
-        } else if (R.have) {
-          air += dt;
-          const vg = R.gy + R.off + R.slope * Math.hypot(ox - R.gx, oz - R.gz); // where the track would be under us
-          rel = oy - vg;
-          let want = null;
-          if (rel < -S.low) want = Math.min(40, (-S.low - rel) * 6 + 3);          // too low  -> climb back
-          else if (rel > S.high) want = -Math.min(40, (rel - S.high) * 6 + 3);    // too high -> come back down
-          if (want !== null) core.set("SledgePoint", sp, "vSpeed", want);
-        }
-        if (now - lastTrace >= 100) {
-          lastTrace = now;
-          trace.push({ t: Math.round(now), y: +oy.toFixed(2), rel: +rel.toFixed(2), vS: +(+vS).toFixed(2), grounded: !!grounded, air: +air.toFixed(2), score: core.sget("GameControl", "score") });
-          if (trace.length > 40) trace.shift();
-        }
+        lastMode = mode === 3 ? 2 : mode;
+        const key = rayMasks.size + "/" + removed + "/" + S.blocked;
+        if (key !== shownKey) { shownKey = key; setStatus("invincible: " + rayMasks.size + " crash ray(s) off, " + removed + " death listener(s) removed, " + S.blocked + " death(s) blocked"); }
       } catch (e) {}
     }, 16);
 
@@ -870,7 +836,7 @@
     let lastJson = JSON.stringify(saved);
     setInterval(() => {
       try {
-        const data = { tab: S.tab, spd: S.spd, jmp: S.jmp, auto: S.auto, sb: S.sb, gift: S.gift, inv: S.inv, low: S.low, high: S.high,
+        const data = { tab: S.tab, spd: S.spd, jmp: S.jmp, auto: S.auto, sb: S.sb, gift: S.gift, inv: S.inv,
           pos: { l: host.offsetLeft, t: host.offsetTop }, min: body.classList.contains("hide") };
         const json = JSON.stringify(data);
         if (json === lastJson) return;
