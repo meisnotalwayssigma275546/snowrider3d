@@ -216,8 +216,8 @@
     const KEY = "srmenu_v1";
     const loadSaved = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } };
     const saved = loadSaved();
-    const S = (window.__SR = { tab: 0, spd: 1, jmp: 1, auto: false, sb: {}, gift: {} });
-    ["tab", "spd", "jmp", "auto", "sb", "gift"].forEach((k) => { if (saved[k] !== undefined) S[k] = saved[k]; });
+    const S = (window.__SR = { tab: 0, spd: 1, jmp: 1, auto: false, sb: {}, gift: {}, inv: false });
+    ["tab", "spd", "jmp", "auto", "sb", "gift", "inv"].forEach((k) => { if (saved[k] !== undefined) S[k] = saved[k]; });
 
     const setStatus = (t) => { status.textContent = t; };
     const guard = (fn) => (...a) => { try { return fn(...a); } catch (e) { setStatus(String(e.message || e)); } };
@@ -284,13 +284,6 @@
       ".sw:active i{width:32px;background:rgba(255,255,255,.8)}",
       ".sw.on:active i{transform:translateX(12px)}",
       ".btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}",
-      ".numctl{display:flex;flex-direction:column;gap:4px;min-width:0}",
-      ".numctl .btns{margin-top:0;gap:3px;flex-wrap:nowrap}",
-      ".numctl .rbtn{height:23px;padding:0 6px;font-size:10px}",
-      ".numericField{width:142px;min-width:0;flex:none;display:flex;flex-direction:column;gap:3px}",
-      ".numericField input{width:100%;min-width:0;box-sizing:border-box}",
-      ".numericField .btns{margin-top:0;gap:2px;flex-wrap:nowrap}",
-      ".numericField .rbtn{height:22px;min-width:0;padding:0 4px;font-size:10px}",
       ".rbtn{border:0;border-radius:16px;padding:0 13px;height:30px;background:linear-gradient(160deg,rgba(255,255,255,.34),rgba(255,255,255,.12));box-shadow:inset 0 1px 1px rgba(255,255,255,.6);color:#000;font:600 12px -apple-system,system-ui,sans-serif;cursor:pointer;flex:none;transition:transform .35s " + soft + "}",
       ".rbtn:active{transform:scale(.92)}",
       ".seg{display:flex;padding:3px;border-radius:16px;background:rgba(0,0,0,.22);box-shadow:inset 0 1px 3px rgba(0,0,0,.25)}",
@@ -311,99 +304,34 @@
       ".empty{padding:18px;text-align:center;opacity:.6;font-size:12px}"
     ].join("");
 
+    // ---- typing that still works inside the game (Unity blocks keys + steals focus) ----
     let outside = false;
-    let activeInput = null;
-    const setUnityKeyboardCapture = (capture) => {
-      try {
-        const m = typeof gameInstance !== "undefined" && gameInstance ? gameInstance.Module : null;
-        const candidates = [
-          m && m.WebGLInput,
-          typeof WebGLInput !== "undefined" ? WebGLInput : null,
-          window.WebGLInput || null
-        ];
-        for (const w of candidates) {
-          if (!w) continue;
-          if ("captureAllKeyboardInput" in w) w.captureAllKeyboardInput = !!capture;
-        }
-        if (m && "doNotCaptureKeyboard" in m) m.doNotCaptureKeyboard = !capture;
-        if (m && m.canvas) {
-          m.canvas.setAttribute("tabindex", "1");
-          if (capture && root.activeElement !== activeInput) {
-            try { m.canvas.focus({ preventScroll: true }); } catch (e) { try { m.canvas.focus(); } catch (_) {} }
-          }
-        }
-      } catch (e) {}
-    };
-    const focusInput = () => {
-      if (!activeInput || outside || activeInput.readOnly || !host.isConnected) return;
-      if (root.activeElement !== activeInput) {
-        try { activeInput.focus({ preventScroll: true }); } catch (e) { try { activeInput.focus(); } catch (_) {} }
-      }
-    };
-    document.addEventListener("pointerdown", (e) => {
-      outside = e.composedPath().indexOf(host) < 0;
-      if (outside && activeInput) {
-        activeInput._leave = true;
-        activeInput = null;
-        setUnityKeyboardCapture(true);
-      }
-    }, true);
+    document.addEventListener("pointerdown", (e) => { outside = e.composedPath().indexOf(host) < 0; }, true);
     const wireInput = (inp) => {
       let startVal = "";
-      const fire = () => {
-        if (inp.value !== startVal) {
-          startVal = inp.value;
-          inp.dispatchEvent(new Event("change", { bubbles: true }));
-        }
-      };
-      inp.addEventListener("focus", () => {
-        activeInput = inp;
-        startVal = inp.value;
-        inp._leave = false;
-        outside = false;
-        setUnityKeyboardCapture(false);
-      });
-      inp.addEventListener("pointerdown", () => {
-        activeInput = inp;
-        outside = false;
-        inp._leave = false;
-        setUnityKeyboardCapture(false);
-        setTimeout(focusInput, 0);
-      });
+      const fire = () => { if (inp.value !== startVal) { startVal = inp.value; inp.dispatchEvent(new Event("change", { bubbles: true })); } };
+      const edit = (a, b, t) => { inp.setRangeText(t, a, b, "end"); inp.dispatchEvent(new Event("input", { bubbles: true })); };
+      inp.addEventListener("focus", () => { startVal = inp.value; inp._leave = false; outside = false; });
+      inp.addEventListener("pointerdown", () => setTimeout(() => inp.focus(), 0));
       inp.addEventListener("blur", () => {
         fire();
-        if (!inp._leave && !outside && !inp.readOnly) {
-          activeInput = inp;
-          setUnityKeyboardCapture(false);
-          setTimeout(focusInput, 0);
-        } else if (activeInput === inp) {
-          activeInput = null;
-          setUnityKeyboardCapture(true);
-        }
+        if (!inp._leave && !outside && !inp.readOnly) setTimeout(() => { if (!root.activeElement) inp.focus(); }, 0);
+      });
+      inp.addEventListener("keydown", (e) => {
+        if (inp.readOnly) return;
+        const k = e.key;
+        if (e.ctrlKey || e.metaKey) { if (k.toLowerCase() === "a") { e.preventDefault(); inp.select(); } return; }
+        const s = inp.selectionStart, t = inp.selectionEnd, n = inp.value.length;
+        if (k === "Enter" || k === "Escape") { e.preventDefault(); inp._leave = true; fire(); inp.blur(); }
+        else if (k.length === 1) { e.preventDefault(); edit(s, t, k); }
+        else if (k === "Backspace") { e.preventDefault(); if (s !== t) edit(s, t, ""); else if (s > 0) edit(s - 1, s, ""); }
+        else if (k === "Delete") { e.preventDefault(); if (s !== t) edit(s, t, ""); else if (s < n) edit(s, s + 1, ""); }
+        else if (k === "ArrowLeft") { e.preventDefault(); const q = s !== t ? s : Math.max(0, s - 1); inp.setSelectionRange(q, q); }
+        else if (k === "ArrowRight") { e.preventDefault(); const q = s !== t ? t : Math.min(n, t + 1); inp.setSelectionRange(q, q); }
+        else if (k === "Home") { e.preventDefault(); inp.setSelectionRange(0, 0); }
+        else if (k === "End") { e.preventDefault(); inp.setSelectionRange(n, n); }
       });
     };
-    window.addEventListener("keydown", (e) => {
-      if (!activeInput || activeInput.readOnly || root.activeElement !== activeInput) return;
-      e.stopImmediatePropagation();
-      if (e.key === "Enter" || e.key === "Escape") {
-        e.preventDefault();
-        activeInput._leave = true;
-        activeInput.blur();
-      } else if (e.key === "Tab") {
-        activeInput._leave = true;
-        activeInput = null;
-        setUnityKeyboardCapture(true);
-      }
-    }, true);
-    window.addEventListener("keyup", (e) => {
-      if (activeInput && root.activeElement === activeInput) e.stopImmediatePropagation();
-    }, true);
-    window.addEventListener("keypress", (e) => {
-      if (activeInput && root.activeElement === activeInput) e.stopImmediatePropagation();
-    }, true);
-    setInterval(() => {
-      if (activeInput && !outside && !activeInput.readOnly) focusInput();
-    }, 50);
     const el = (tag, props, kids) => {
       const n = document.createElement(tag);
       if (props) Object.assign(n, props);
@@ -454,7 +382,7 @@
 
     const minBtn = el("button", { className: "min", textContent: "–" });
     const dot = el("span", { className: "dot" });
-    const head = el("div", { className: "h" }, [el("span", { textContent: "Mod Menu" }, [dot]), minBtn]);
+    const head = el("div", { className: "h" }, [el("span", { textContent: "Snow Rider" }, [dot]), minBtn]);
     const status = el("div", { className: "status", textContent: "ready - start a run for the game objects to exist" });
 
     // ---- number stepper (ints or decimals) ----
@@ -463,13 +391,12 @@
       const input = el("input", { type: "text", inputMode: "decimal", value: init });
       const minus = el("button", { textContent: "−" });
       const plus = el("button", { textContent: "+" });
-      const stepRow = el("div", { className: "step" + (wide ? " wide" : "") }, [minus, input, plus]);
+      const wrap = el("div", { className: "step" + (wide ? " wide" : "") }, [minus, input, plus]);
       const norm = (v) => { v = +v; if (!isFinite(v)) v = min; v = Math.round(v / step) * step; v = Math.min(max, Math.max(min, v)); return +v.toFixed(dec); };
       const set = (v, user) => { v = norm(v); input.value = v; onSet(v, user); };
       input.onchange = () => set(input.value, true);
-      minus.onclick = () => set(+input.value - 5, true);
-      plus.onclick = () => set(+input.value + 5, true);
-      const wrap = el("div", { className: "numctl" }, [stepRow, quickButtons((amount) => set((parseFloat(input.value) || 0) + amount, true))]);
+      minus.onclick = () => set(+input.value - step, true);
+      plus.onclick = () => set(+input.value + step, true);
       // sync from the game without firing onSet, and never while you're typing
       const sync = (v) => { if (root.activeElement === input || v === undefined || v === null || !isFinite(v)) return; const n = +(+v).toFixed(dec); if (String(n) !== input.value) input.value = n; };
       return { wrap, input, set, sync };
@@ -478,8 +405,6 @@
       el("div", { className: "lbl" }, [text(title), el("small", { textContent: sub })]), ctl]);
     const subOf = (r) => r.querySelector("small");
     const btn = (label, fn) => { const b = el("button", { className: "rbtn", textContent: label }); b.onclick = guard(fn); return b; };
-    const quickButtons = (onAdd) => el("div", { className: "btns quick" },
-      [5, 10, 100, 1000].map((amount) => btn("+" + amount, () => onAdd(amount))));
 
     // =========================================================
     // TAB 1: GAME
@@ -495,7 +420,14 @@
     }));
     const score = stepper(0, 0, 99999999, true, guard((v, user) => { if (user) { core.sset("GameControl", "score", v); setStatus("score = " + v); } }));
 
+    const invSw = el("div", { className: "sw" + (S.inv ? " on" : "") }, [el("i")]);
+    invSw.onclick = () => { S.inv = !S.inv; invSw.classList.toggle("on", S.inv); setStatus("invincible " + (S.inv ? "ON" : "OFF")); };
     const runCard = el("div", { className: "card" }, [rowOf("Presents this run", "added to your total at the end", run.wrap)]);
+    runCard.appendChild(el("div", { className: "btns" }, [
+      btn("+100", () => { const v = core.sget("GameControl", "giftsThisGame") + 100; core.sset("GameControl", "giftsThisGame", v); run.input.value = v; setStatus("presents this run = " + v); }),
+      btn("+1000", () => { const v = core.sget("GameControl", "giftsThisGame") + 1000; core.sset("GameControl", "giftsThisGame", v); run.input.value = v; setStatus("presents this run = " + v); }),
+      btn("+10000", () => { const v = core.sget("GameControl", "giftsThisGame") + 10000; core.sset("GameControl", "giftsThisGame", v); run.input.value = v; setStatus("presents this run = " + v); })
+    ]));
     const sledsCard = el("div", { className: "card" }, [rowOf("Sleds", "unlock for this session / make free", el("div"))]);
     sledsCard.appendChild(el("div", { className: "btns" }, [
       btn("Free sleds", () => core.findAsync("Skin", guard((list, err) => {
@@ -505,7 +437,7 @@
       }), (p) => setStatus("scanning " + Math.round(p * 100) + "%")))
     ]));
     const page0 = el("div", { className: "pg" }, [
-      el("div", { className: "card" }, [rowOf("Speed", "base speed + acceleration", speed.wrap), rowOf("Jump power", "jump speed", jump.wrap)]),
+      el("div", { className: "card" }, [rowOf("Invincible", "blocks crashes", invSw), rowOf("Speed", "base speed + acceleration", speed.wrap), rowOf("Jump power", "jump speed", jump.wrap)]),
       runCard,
       el("div", { className: "card" }, [rowOf("Total presents", "saved total", total.wrap), rowOf("Score", "current run", score.wrap)]),
       sledsCard
@@ -604,7 +536,6 @@
         const nm = el("div", { className: "nm", title: hex(a) }, [text(name), el("i", { textContent: lo + "–" + hi })]);
         const prob = el("input", { type: "text", value: String(Math.round(core.get("StructData", a, "probability") * 1000) / 1000) });
         prob.onchange = guard(() => { const v = parseFloat(prob.value); if (isFinite(v)) { core.stash("StructData", a, "probability"); core.set("StructData", a, "probability", v); setStatus(name + " probability = " + v); } });
-        const probField = prob;
         const only = el("button", { className: "go", textContent: "★", title: "only this one" });
         only.onclick = guard(() => {
           structs.forEach((b) => { core.stash("StructData", b, "probability"); core.set("StructData", b, "probability", b === a ? 1000 : 0); });
@@ -612,7 +543,7 @@
           core.set("StructData", a, "minScoreToSpawn", 0); core.set("StructData", a, "maxScoreToSpawn", 99999999);
           drawStructs(); setStatus("only " + name + " can spawn now");
         });
-        structList.appendChild(el("div", { className: "tr" }, [nm, probField, only]));
+        structList.appendChild(el("div", { className: "tr" }, [nm, prob, only]));
       });
     };
     const loadStructs = () => core.findAsync("StructData", guard((list, err) => {
@@ -667,23 +598,10 @@
           if (c === "b") x = (t === "true" || t === "1");
           else { x = parseFloat(t); if (!isFinite(x)) { inp.value = fmt(r); return; } if ("ihl".indexOf(c) >= 0) x = Math.trunc(x); }
           core.wr(r.type, r.base + r.off, x);
-          r.value = x;
           setStatus(inspState.cls + "." + r.name + " = " + x);
         });
         inp.onkeydown = (e) => { if (e.key === "Enter") inp.blur(); };
-        let field = inp;
-        if (editable && "fdihl".indexOf(c) >= 0) {
-          field = el("div", { className: "numericField" }, [inp, quickButtons((amount) => {
-            const current = parseFloat(inp.value);
-            let x = (isFinite(current) ? current : 0) + amount;
-            if ("ihl".indexOf(c) >= 0) x = Math.trunc(x);
-            core.wr(r.type, r.base + r.off, x);
-            r.value = x;
-            inp.value = fmt({ value: x, type: r.type });
-            setStatus(inspState.cls + "." + r.name + " = " + x);
-          })]);
-        }
-        const kids = [nm, field];
+        const kids = [nm, inp];
         const target = r.type.split(":")[1];
         if (c === "p" && target && core.FIELDS[target] && r.value) {
           const go = el("button", { className: "go", textContent: "→", title: "open " + target });
@@ -810,6 +728,21 @@
       } catch (e) {}
     }, 600);
 
+    // invincible: flip "end" back to "play"; pauses itself if the crash repeats every frame
+    let blocks = [], coolUntil = 0;
+    setInterval(() => {
+      if (!S.inv) return;
+      try {
+        const now = performance.now(); if (now < coolUntil) return;
+        const gm = core.statics("GameControl") + 40;
+        if (core.rd("i", gm) === 3) {
+          core.wr("i", gm, 2);
+          blocks = blocks.filter((t) => now - t < 1000); blocks.push(now);
+          if (blocks.length > 20) { coolUntil = now + 3000; blocks = []; setStatus("crash repeats every frame - invincible paused 3s"); }
+        }
+      } catch (e) {}
+    }, 16);
+
     // keep the number boxes in step with the game (only while they're visible and not being typed in)
     setInterval(() => {
       if (body.classList.contains("hide")) return;
@@ -839,7 +772,7 @@
     let lastJson = JSON.stringify(saved);
     setInterval(() => {
       try {
-        const data = { tab: S.tab, spd: S.spd, jmp: S.jmp, auto: S.auto, sb: S.sb, gift: S.gift,
+        const data = { tab: S.tab, spd: S.spd, jmp: S.jmp, auto: S.auto, sb: S.sb, gift: S.gift, inv: S.inv,
           pos: { l: host.offsetLeft, t: host.offsetTop }, min: body.classList.contains("hide") };
         const json = JSON.stringify(data);
         if (json === lastJson) return;
