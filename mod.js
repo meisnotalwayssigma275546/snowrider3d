@@ -216,8 +216,8 @@
     const KEY = "srmenu_v1";
     const loadSaved = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } };
     const saved = loadSaved();
-    const S = (window.__SR = { tab: 0, spd: 1, jmp: 1, auto: false, sb: {}, gift: {}, inv: false, blocked: 0 });
-    ["tab", "spd", "jmp", "auto", "sb", "gift", "inv"].forEach((k) => { if (saved[k] !== undefined) S[k] = saved[k]; });
+    const S = (window.__SR = { tab: 0, spd: 1, jmp: 1, auto: false, sb: {}, gift: {}, inv: false, ij: false, blocked: 0 });
+    ["tab", "spd", "jmp", "auto", "sb", "gift", "inv", "ij"].forEach((k) => { if (saved[k] !== undefined) S[k] = saved[k]; });
 
     const setStatus = (t) => { status.textContent = t; };
     const guard = (fn) => (...a) => { try { return fn(...a); } catch (e) { setStatus(String(e.message || e)); } };
@@ -421,6 +421,9 @@
     const score = stepper(0, 0, 9223372036854775807, true, guard((v, user) => { if (user) { core.sset("GameControl", "score", v); setStatus("score = " + v); } }));
 
     const invSw = el("div", { className: "sw" + (S.inv ? " on" : "") }, [el("i")]);
+    const ijSw = el("div", { className: "sw" + (S.ij ? " on" : "") }, [el("i")]);
+    ijSw.onclick = () => { S.ij = !S.ij; ijSw.classList.toggle("on", S.ij); setStatus("infinite jump " + (S.ij ? "ON - hold jump in the air" : "OFF")); };
+    const killBtn = btn("Kill character", () => killNow());
     invSw.onclick = () => { S.inv = !S.inv; invSw.classList.toggle("on", S.inv); setStatus("invincible " + (S.inv ? "ON - death is blocked" : "OFF")); };
     const runCard = el("div", { className: "card" }, [rowOf("Presents this run", "added to your total at the end", run.wrap)]);
     runCard.appendChild(el("div", { className: "btns" }, [
@@ -437,7 +440,7 @@
       }), (p) => setStatus("scanning " + Math.round(p * 100) + "%")))
     ]));
     const page0 = el("div", { className: "pg" }, [
-      el("div", { className: "card" }, [rowOf("Invincible", "you can't die (crashes, falling, height)", invSw), rowOf("Speed", "base speed + acceleration", speed.wrap), rowOf("Jump power", "jump speed", jump.wrap)]),
+      el("div", { className: "card" }, [rowOf("Invincible", "you can't die (crashes, falling, height)", invSw), el("div", { className: "btns", style: "margin:9px 0" }, [killBtn]), rowOf("Infinite jump", "jump again in the air (hold jump)", ijSw), rowOf("Speed", "base speed + acceleration", speed.wrap), rowOf("Jump power", "jump speed", jump.wrap)]),
       runCard,
       el("div", { className: "card" }, [rowOf("Total presents", "saved total", total.wrap), rowOf("Score", "current run", score.wrap)]),
       sledsCard
@@ -688,7 +691,7 @@
       const b = bounds();
       const cl = clamp(host.offsetLeft, 0, b.maxL), ct = clamp(host.offsetTop, 0, b.maxT);
       if (cl === host.offsetLeft && ct === host.offsetTop) return;
-      host.style.left = cl + "px"; host.style.top = ct + "px";
+            host.style.left = cl + "px"; host.style.top = ct + "px";
     };
     if (saved.pos) { host.style.left = saved.pos.l + "px"; host.style.top = saved.pos.t + "px"; }
     if (saved.min) body.classList.add("hide");
@@ -730,11 +733,10 @@
 
     // ---- INVINCIBLE: death is removed at every level ----
     // 1) crash rays get an empty layer mask, so collisions never register
-    // 2) everything the game runs when you die (GameControl.OnEnd: shatter the sled, end screen, camera...) is unhooked
-    // 3) if the game still flips to the "end" state (falling too low, flying too high, anything), it is flipped back
-    //    in the same moment - and because nothing listens to OnEnd any more, nothing visible happens
+    // 2) everything the game runs when you die (GameControl.OnEnd) is unhooked (and remembered, so it can be restored)
+    // 3) if the game still flips to the "end" state, it is flipped back in the same moment
     const MASK_OFF = 84; // CollisionRay.mask (LayerMask int)
-    const rayMasks = new Map();
+    const rayMasks = new Map(), endBackup = new Map();
     let scanning = false, lastScan = 0, lastMode = 0, shownKey = "", removed = 0;
     const klassOf = (n) => { try { return core.klass(n); } catch (e) { return 0; } };
     const isInst = (a, k) => k && core.okPtr(a) && core.I()[a >> 2] === k;
@@ -764,6 +766,7 @@
       const h = core.I(), items = h[(L + 8) >> 2] >>> 0, size = h[(L + 12) >> 2];
       if (size <= 0 || size > 256) return 0;
       if (!core.okPtr(items) || h[(items + 12) >> 2] < size) return 0;
+      if (!endBackup.has(L)) endBackup.set(L, size);
       h[(L + 12) >> 2] = 0;
       return size;
     };
@@ -782,9 +785,13 @@
       if (u8[ev + 20] <= 1) u8[ev + 20] = 0; // m_CallsDirty: don't rebuild the serialized listeners
       return n;
     };
+    const restoreEnd = () => {
+      endBackup.forEach((size, L) => { try { if (core.okPtr(L) && core.I()[(L + 12) >> 2] === 0) core.I()[(L + 12) >> 2] = size; } catch (e) {} });
+      endBackup.clear(); removed = 0;
+    };
     setInterval(() => {
       try {
-        if (!S.inv) { if (rayMasks.size) restoreRays(); return; }
+        if (!S.inv) { if (rayMasks.size) restoreRays(); if (endBackup.size) restoreEnd(); return; }
         const k = klassOf("CollisionRay");
         rayMasks.forEach((m, a) => { if (!isInst(a, k)) rayMasks.delete(a); });
         const list = raysFromPlayer();
@@ -806,6 +813,39 @@
         if (key !== shownKey) { shownKey = key; setStatus("invincible: " + rayMasks.size + " crash ray(s) off, " + removed + " death listener(s) removed, " + S.blocked + " death(s) blocked"); }
       } catch (e) {}
     }, 16);
+
+    // ---- INFINITE JUMP: while a jump input is held, the sled counts as grounded and may jump again ----
+    let jumpDown = false, sledPts = [], ptsScan = 0, ijOn = false;
+    const isJumpKey = (e) => e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW";
+    window.addEventListener("keydown", (e) => { if (isJumpKey(e)) jumpDown = true; }, true);
+    window.addEventListener("keyup", (e) => { if (isJumpKey(e)) jumpDown = false; }, true);
+    window.addEventListener("pointerdown", (e) => { if (e.composedPath().indexOf(host) < 0) jumpDown = true; }, true);
+    window.addEventListener("pointerup", () => { jumpDown = false; }, true);
+    window.addEventListener("blur", () => { jumpDown = false; });
+    setInterval(() => {
+      try {
+        const p = core.obj("PlayerControl");
+        if (!p) return;
+        const d = core.get("PlayerControl", p, "data");
+        if (S.ij && core.okPtr(d)) { core.stash("SledgeData", d, "pointJumpDelay"); core.set("SledgeData", d, "pointJumpDelay", 0); ijOn = true; }
+        else if (!S.ij && ijOn && core.okPtr(d)) { core.unstash("SledgeData", d, "pointJumpDelay"); ijOn = false; }
+        if (!S.ij || !jumpDown) return;
+        core.set("PlayerControl", p, "alreadyJumped", false);
+        core.set("PlayerControl", p, "isGrounded", true);
+        const cp = core.get("PlayerControl", p, "collisionPoint");
+        (core.okPtr(cp) ? sledPts.concat([cp]) : sledPts).forEach((a) => core.set("SledgePoint", a, "isGrounded", true));
+        if (performance.now() - ptsScan > 3000) { ptsScan = performance.now(); core.findAsync("SledgePoint", (l) => { sledPts = l; }); }
+      } catch (e) {}
+    }, 16);
+
+    // ---- KILL: undo invincibility completely, then end the run the way the game does ----
+    function killNow() {
+      S.inv = false; invSw.classList.remove("on");
+      restoreRays(); restoreEnd();
+      ["Sledge", "Sled", "Player", "PlayerControl", "Sledge(Clone)", "Sled(Clone)", "Hero"].forEach((n) => { try { gameInstance.SendMessage(n, "Die"); } catch (e) {} });
+      core.wr("i", core.statics("GameControl") + 40, 3);
+      setStatus("kill sent - press it again if nothing happens");
+    }
 
     // keep the number boxes in step with the game (only while they're visible and not being typed in)
     setInterval(() => {
@@ -836,7 +876,7 @@
     let lastJson = JSON.stringify(saved);
     setInterval(() => {
       try {
-        const data = { tab: S.tab, spd: S.spd, jmp: S.jmp, auto: S.auto, sb: S.sb, gift: S.gift, inv: S.inv,
+        const data = { tab: S.tab, spd: S.spd, jmp: S.jmp, auto: S.auto, sb: S.sb, gift: S.gift, inv: S.inv, ij: S.ij,
           pos: { l: host.offsetLeft, t: host.offsetTop }, min: body.classList.contains("hide") };
         const json = JSON.stringify(data);
         if (json === lastJson) return;
