@@ -409,16 +409,16 @@
     // =========================================================
     // TAB 1: GAME
     // =========================================================
-    const speed = stepper(S.spd, 1, 50, false, (v, user) => { S.spd = v; if (user) setStatus("speed x" + v); });
-    const jump = stepper(S.jmp, 1, 20, false, (v, user) => { S.jmp = v; if (user) setStatus("jump x" + v); });
-    const run = stepper(0, 0, 9999999, true, guard((v, user) => { if (user) { core.sset("GameControl", "giftsThisGame", v); setStatus("presents this run = " + v); } }));
-    const total = stepper(0, -99999, 99999999, true, guard((v, user) => {
+    const speed = stepper(S.spd, 1, 9223372036854775807, false, (v, user) => { S.spd = v; if (user) setStatus("speed x" + v); });
+    const jump = stepper(S.jmp, 1, 9223372036854775807, false, (v, user) => { S.jmp = v; if (user) setStatus("jump x" + v); });
+    const run = stepper(0, 0, 9223372036854775807, true, guard((v, user) => { if (user) { core.sset("GameControl", "giftsThisGame", v); setStatus("presents this run = " + v); } }));
+    const total = stepper(0, -99999, 9223372036854775807, true, guard((v, user) => {
       if (!user) return;
       const a = core.giftSlot();
       if (!a) return setStatus("saved presents entry not found");
       core.wr("i", a, v); setStatus("total presents = " + v + " (play a run to save)");
     }));
-    const score = stepper(0, 0, 99999999, true, guard((v, user) => { if (user) { core.sset("GameControl", "score", v); setStatus("score = " + v); } }));
+    const score = stepper(0, 0, 9223372036854775807, true, guard((v, user) => { if (user) { core.sset("GameControl", "score", v); setStatus("score = " + v); } }));
 
     const invSw = el("div", { className: "sw" + (S.inv ? " on" : "") }, [el("i")]);
     invSw.onclick = () => { S.inv = !S.inv; invSw.classList.toggle("on", S.inv); setStatus("invincible " + (S.inv ? "ON - death is blocked" : "OFF")); };
