@@ -216,7 +216,7 @@
     const KEY = "srmenu_v1";
     const loadSaved = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } };
     const saved = loadSaved();
-    const S = (window.__SR = { tab: 0, spd: 1, jmp: 1, auto: false, sb: {}, gift: {}, inv: false });
+    const S = (window.__SR = { tab: 0, spd: 1, jmp: 1, auto: false, sb: {}, gift: {}, inv: false, revive: false });
     ["tab", "spd", "jmp", "auto", "sb", "gift", "inv"].forEach((k) => { if (saved[k] !== undefined) S[k] = saved[k]; });
 
     const setStatus = (t) => { status.textContent = t; };
@@ -421,7 +421,7 @@
     const score = stepper(0, 0, 99999999, true, guard((v, user) => { if (user) { core.sset("GameControl", "score", v); setStatus("score = " + v); } }));
 
     const invSw = el("div", { className: "sw" + (S.inv ? " on" : "") }, [el("i")]);
-    invSw.onclick = () => { S.inv = !S.inv; invSw.classList.toggle("on", S.inv); setStatus("invincible " + (S.inv ? "ON" : "OFF")); };
+    invSw.onclick = () => { S.inv = !S.inv; invSw.classList.toggle("on", S.inv); setStatus("invincible " + (S.inv ? "ON - crash detection off, no falling" : "OFF")); };
     const runCard = el("div", { className: "card" }, [rowOf("Presents this run", "added to your total at the end", run.wrap)]);
     runCard.appendChild(el("div", { className: "btns" }, [
       btn("+100", () => { const v = core.sget("GameControl", "giftsThisGame") + 100; core.sset("GameControl", "giftsThisGame", v); run.input.value = v; setStatus("presents this run = " + v); }),
@@ -437,7 +437,7 @@
       }), (p) => setStatus("scanning " + Math.round(p * 100) + "%")))
     ]));
     const page0 = el("div", { className: "pg" }, [
-      el("div", { className: "card" }, [rowOf("Invincible", "blocks crashes", invSw), rowOf("Speed", "base speed + acceleration", speed.wrap), rowOf("Jump power", "jump speed", jump.wrap)]),
+      el("div", { className: "card" }, [rowOf("Invincible", "no crashes, can't fall off the map", invSw), rowOf("Speed", "base speed + acceleration", speed.wrap), rowOf("Jump power", "jump speed", jump.wrap)]),
       runCard,
       el("div", { className: "card" }, [rowOf("Total presents", "saved total", total.wrap), rowOf("Score", "current run", score.wrap)]),
       sledsCard
@@ -688,7 +688,7 @@
       const b = bounds();
       const cl = clamp(host.offsetLeft, 0, b.maxL), ct = clamp(host.offsetTop, 0, b.maxT);
       if (cl === host.offsetLeft && ct === host.offsetTop) return;
-            host.style.left = cl + "px"; host.style.top = ct + "px";
+      host.style.left = cl + "px"; host.style.top = ct + "px";
     };
     if (saved.pos) { host.style.left = saved.pos.l + "px"; host.style.top = saved.pos.t + "px"; }
     if (saved.min) body.classList.add("hide");
@@ -728,17 +728,66 @@
       } catch (e) {}
     }, 600);
 
-    // invincible: flip "end" back to "play"; pauses itself if the crash repeats every frame
-    let blocks = [], coolUntil = 0;
+    // ---- INVINCIBLE (real): the crash never happens ----
+    // 1) the sled's crash-detection rays get an empty layer mask, so they can't hit anything -> no "you died"
+    // 2) falling into gaps: if the sled stays in the air too long it glides down slowly instead of dropping into the void
+    // (old "flip the game state back" trick is gone: that's what shattered the sled and looped the respawn.
+    //  If you ever want it back as a fallback, type  __SR.revive = true  in the console.)
+    const MASK_OFF = 84; // CollisionRay.mask (LayerMask int)
+    const rayMasks = new Map();
+    let scanning = false, lastScan = 0, reported = -1, air = 0, lastTick = performance.now(), blocks = [], coolUntil = 0;
+    const klassOf = (n) => { try { return core.klass(n); } catch (e) { return 0; } };
+    const isInst = (a, k) => k && core.okPtr(a) && core.I()[a >> 2] === k;
+    const raysFromPlayer = () => {
+      const k = klassOf("CollisionRay"); if (!k) return [];
+      const p = core.obj("PlayerControl"); if (!p) return [];
+      const arr = core.get("PlayerControl", p, "collisionRays");
+      if (!core.okPtr(arr)) return [];
+      const h = core.I(), n = h[(arr + 12) >> 2];
+      if (!(n > 0 && n < 64)) return [];
+      const out = [];
+      for (let i = 0; i < n; i++) { const q = h[(arr + 16 + 4 * i) >> 2] >>> 0; if (isInst(q, k)) out.push(q); }
+      return out;
+    };
+    const killRay = (a) => {
+      if (!rayMasks.has(a)) rayMasks.set(a, core.rd("i", a + MASK_OFF));
+      if (core.rd("i", a + MASK_OFF) !== 0) core.wr("i", a + MASK_OFF, 0);
+    };
+    const restoreRays = () => {
+      const k = klassOf("CollisionRay");
+      rayMasks.forEach((m, a) => { if (isInst(a, k)) core.wr("i", a + MASK_OFF, m); });
+      rayMasks.clear(); reported = -1;
+    };
     setInterval(() => {
-      if (!S.inv) return;
       try {
-        const now = performance.now(); if (now < coolUntil) return;
-        const gm = core.statics("GameControl") + 40;
-        if (core.rd("i", gm) === 3) {
-          core.wr("i", gm, 2);
-          blocks = blocks.filter((t) => now - t < 1000); blocks.push(now);
-          if (blocks.length > 20) { coolUntil = now + 3000; blocks = []; setStatus("crash repeats every frame - invincible paused 3s"); }
+        const now = performance.now(), dt = Math.min(0.25, (now - lastTick) / 1000); lastTick = now;
+        if (!S.inv) { if (rayMasks.size) restoreRays(); air = 0; return; }
+        // forget rays of sleds that no longer exist
+        const k = klassOf("CollisionRay");
+        rayMasks.forEach((m, a) => { if (!isInst(a, k)) rayMasks.delete(a); });
+        const list = raysFromPlayer();
+        if (!list.length && !scanning && now - lastScan > 4000) {
+          scanning = true; lastScan = now; // fallback: scan the heap for rays
+          core.findAsync("CollisionRay", (found) => { found.forEach(killRay); scanning = false; });
+        }
+        list.forEach(killRay);
+        if (rayMasks.size !== reported) { reported = rayMasks.size; setStatus("invincible: " + reported + " crash ray(s) disabled"); }
+
+        // anti-fall (only while actually playing)
+        if (core.rd("i", core.statics("GameControl") + 40) !== 2) { air = 0; return; }
+        const p = core.obj("PlayerControl"); if (!p) return;
+        const sp = core.get("PlayerControl", p, "collisionPoint"); if (!core.okPtr(sp)) return;
+        if (core.get("SledgePoint", sp, "isGrounded")) { air = 0; return; }
+        air += dt;
+        if (air < 0.7) return; // normal jumps are shorter than this
+        const g = Math.abs(core.get("SledgePoint", sp, "gravityAcc")) || 10, lim = -0.1 * g;
+        const v = core.get("SledgePoint", sp, "vSpeed");
+        if (isFinite(v) && v < lim) core.set("SledgePoint", sp, "vSpeed", lim);
+
+        // optional old-style fallback
+        if (S.revive && now >= coolUntil) {
+          const gm = core.statics("GameControl") + 40;
+          if (core.rd("i", gm) === 3) { core.wr("i", gm, 2); blocks = blocks.filter((t) => now - t < 1000); blocks.push(now); if (blocks.length > 20) { coolUntil = now + 3000; blocks = []; } }
         }
       } catch (e) {}
     }, 16);
